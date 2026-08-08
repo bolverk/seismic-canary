@@ -28,6 +28,6 @@ venv/
 Thumbs.db
 
 # Data (large files tracked separately)
-data/*.parquet
 data/timelines/
 !data/.gitkeep
+!data/events.parquet
