@@ -1,0 +1,157 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "generated": 1705334400000,
+    "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=2024-01-14&endtime=2024-01-15&minlatitude=24&maxlatitude=42&minlongitude=43&maxlongitude=64",
+    "title": "USGS Earthquakes",
+    "status": 200,
+    "api": "1.14.1",
+    "count": 4
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "mag": 4.2,
+        "place": "15km NW of Tehran, Iran",
+        "time": 1705312245000,
+        "updated": 1705315000000,
+        "tz": null,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000abc1",
+        "detail": "https://earthquake.usgs.gov/fdsnws/event/1/query?eventid=us7000abc1&format=geojson",
+        "felt": 12,
+        "cdi": 4.1,
+        "mmi": null,
+        "alert": null,
+        "status": "reviewed",
+        "tsunami": 0,
+        "sig": 271,
+        "net": "us",
+        "code": "7000abc1",
+        "ids": ",us7000abc1,",
+        "sources": ",us,",
+        "types": ",origin,phase-data,",
+        "nst": 42,
+        "dmin": 1.2,
+        "rms": 0.65,
+        "gap": 45,
+        "magType": "mb",
+        "type": "earthquake",
+        "title": "M 4.2 - 15km NW of Tehran, Iran"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [51.2, 35.8, 10.0]
+      },
+      "id": "us7000abc1"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "mag": 3.1,
+        "place": "20km S of Dezful, Iran",
+        "time": 1705298400000,
+        "updated": 1705300000000,
+        "tz": null,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000abc2",
+        "detail": "https://earthquake.usgs.gov/fdsnws/event/1/query?eventid=us7000abc2&format=geojson",
+        "felt": null,
+        "cdi": null,
+        "mmi": null,
+        "alert": null,
+        "status": "automatic",
+        "tsunami": 0,
+        "sig": 148,
+        "net": "us",
+        "code": "7000abc2",
+        "ids": ",us7000abc2,",
+        "sources": ",us,",
+        "types": ",origin,",
+        "nst": 18,
+        "dmin": 2.5,
+        "rms": 0.82,
+        "gap": 78,
+        "magType": "ml",
+        "type": "earthquake",
+        "title": "M 3.1 - 20km S of Dezful, Iran"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [48.4, 32.1, 15.0]
+      },
+      "id": "us7000abc2"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "mag": 2.5,
+        "place": "Eastern Turkey",
+        "time": 1705280000000,
+        "updated": 1705282000000,
+        "tz": null,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000abc3",
+        "detail": "https://earthquake.usgs.gov/fdsnws/event/1/query?eventid=us7000abc3&format=geojson",
+        "felt": null,
+        "cdi": null,
+        "mmi": null,
+        "alert": null,
+        "status": "automatic",
+        "tsunami": 0,
+        "sig": 96,
+        "net": "us",
+        "code": "7000abc3",
+        "ids": ",us7000abc3,",
+        "sources": ",us,",
+        "types": ",origin,",
+        "nst": 8,
+        "dmin": 4.1,
+        "rms": 1.1,
+        "gap": 120,
+        "magType": "mb",
+        "type": "earthquake",
+        "title": "M 2.5 - Eastern Turkey"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [43.5, 39.2, 5.0]
+      },
+      "id": "us7000abc3"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "mag": 1.8,
+        "place": "Central Iran",
+        "time": 1705270000000,
+        "updated": 1705272000000,
+        "tz": null,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000abc4",
+        "detail": "https://earthquake.usgs.gov/fdsnws/event/1/query?eventid=us7000abc4&format=geojson",
+        "felt": null,
+        "cdi": null,
+        "mmi": null,
+        "alert": null,
+        "status": "automatic",
+        "tsunami": 0,
+        "sig": 45,
+        "net": "us",
+        "code": "7000abc4",
+        "ids": ",us7000abc4,",
+        "sources": ",us,",
+        "types": ",origin,",
+        "nst": 5,
+        "dmin": 6.0,
+        "rms": 1.4,
+        "gap": 180,
+        "magType": "ml",
+        "type": "quarry blast",
+        "title": "M 1.8 - Central Iran"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [52.8, 33.5, null]
+      },
+      "id": "us7000abc4"
+    }
+  ]
+}
