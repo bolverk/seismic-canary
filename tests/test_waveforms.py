@@ -40,6 +40,14 @@ class TestEligibility:
         ) is True
 
 
+try:
+    import obspy
+    HAS_OBSPY = True
+except ImportError:
+    HAS_OBSPY = False
+
+
+@pytest.mark.skipif(not HAS_OBSPY, reason="ObsPy not installed")
 class TestProcessWaveform:
     def _make_synthetic_trace(self, sr=100.0, duration=60.0, p_time=10.0, s_time=20.0):
         """Create a synthetic trace with P and S arrivals."""
