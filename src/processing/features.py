@@ -5,7 +5,7 @@ anomaly detection. Each feature function returns (value, uncertainty, quality).
 """
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple, List
+from typing import Optional, List
 
 import numpy as np
 

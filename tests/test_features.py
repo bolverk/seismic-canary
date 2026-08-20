@@ -5,7 +5,6 @@ import pytest
 from src.processing.features import (
     compute_mb_ms,
     compute_spectral_slope,
-    compute_corner_frequency,
     compute_dominant_frequency,
     compute_snr,
     compute_duration,

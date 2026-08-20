@@ -8,7 +8,7 @@ to ensure the system can be extended without redesign.
 """
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import List
 
 from src.models.evidence import Observation
 

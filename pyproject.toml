@@ -1,0 +1,61 @@
+[project]
+name = "seismic-canary"
+version = "0.2.0"
+description = "Public-data seismic monitoring for underground nuclear tests and anomalous explosions in Iran and surrounding region."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Almog Yalinewich" },
+]
+keywords = ["seismic", "monitoring", "anomaly-detection", "streamlit", "usgs"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+
+# This project is run from source (Streamlit app + scheduled scripts) and uses
+# the `src` package namespace directly, so no build backend / entry points are
+# defined here. Tests and linting are configured below.
+dependencies = [
+    "streamlit>=1.37.0",
+    "pandas>=2.2.0",
+    "pyarrow>=17.0.0",
+    "obspy>=1.4.0",
+    "requests>=2.31.0",
+    "folium>=0.17.0",
+    "streamlit-folium>=0.22.0",
+    "plotly>=5.20.0",
+    "scikit-learn>=1.5.0",
+    "numpy>=1.26.0",
+    "scipy>=1.14.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+]
+
+[tool.pytest.ini_options]
+# Scripts and the app import from the repository root (e.g. `from src.config import ...`).
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "network: tests that hit live network services (generally skipped)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]

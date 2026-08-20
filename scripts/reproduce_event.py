@@ -7,7 +7,6 @@ Usage:
     python scripts/reproduce_event.py <event_id>
 """
 import argparse
-import json
 import logging
 import os
 import sys
@@ -33,7 +32,7 @@ def reproduce_event(event_id: str) -> int:
         Exit code: 0 if reproducible, 1 if results differ or event not found.
     """
     print(f"{'='*60}")
-    print(f"Seismic Canary - Event Reproduction Report")
+    print("Seismic Canary - Event Reproduction Report")
     print(f"Event ID: {event_id}")
     print(f"Model Version: {Config.MODEL_VERSION}")
     print(f"Processing Version: {Config.PROCESSING_VERSION}")
