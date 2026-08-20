@@ -1,7 +1,7 @@
 """Tests for rule-based anomaly model."""
 import pytest
 
-from src.models.anomaly import RuleBasedModel, Assessment, AnomalyModel
+from src.models.anomaly import RuleBasedModel, AnomalyModel
 
 
 @pytest.fixture
@@ -112,6 +112,84 @@ class TestInsufficientData:
         result = model.assess(event)
         # Location alone has very low confidence
         assert result.insufficient_data is True
+
+
+class TestSourceMechanism:
+    def test_moment_tensor_magtype_lowercase(self, model):
+        """Moment-tensor magnitude types strongly favor earthquake."""
+        event = {
+            "depth_km": 10.0, "p_s_ratio": None, "mb_ms": None,
+            "latitude": 35.0, "longitude": 51.0,
+            "magnitude_type": "mww", "event_type": "earthquake",
+        }
+        result = model.assess(event)
+        mech = [c for c in result.contributing_features if c.feature_name == "source_mechanism"][0]
+        assert mech.contribution_earthquake > 0.8
+
+    def test_uppercase_body_wave_magtype_is_weak_constraint(self, model):
+        """Regression: 'ML' (uppercase) classified earthquake must yield the
+        weak body-wave constraint, not 'no source mechanism information'.
+        Previously magnitude_type was only lower-cased in the moment-tensor
+        branch, so an uppercase body-wave magType fell through to the
+        'no information' branch."""
+        event = {
+            "depth_km": 25.0, "p_s_ratio": -0.2, "mb_ms": 0.3,
+            "latitude": 35.0, "longitude": 51.0,
+            "magnitude_type": "ML", "event_type": "earthquake",
+        }
+        result = model.assess(event)
+        mech = [c for c in result.contributing_features if c.feature_name == "source_mechanism"][0]
+        assert mech.confidence > 0, "Upper-case body-wave magType must be recognized"
+        assert mech.contribution_earthquake > mech.contribution_explosion
+        assert "not available" not in mech.explanation.lower()
+
+    def test_classified_explosion_strong(self, model):
+        """Catalog-classified explosion strongly favors explosion."""
+        event = {
+            "depth_km": 2.0, "p_s_ratio": None, "mb_ms": None,
+            "latitude": 34.0, "longitude": 55.0,
+            "magnitude_type": "mb", "event_type": "nuclear explosion",
+        }
+        result = model.assess(event)
+        mech = [c for c in result.contributing_features if c.feature_name == "source_mechanism"][0]
+        assert mech.contribution_explosion > 0.8
+
+
+class TestLocationRule:
+    def test_near_site_of_interest_leans_explosion(self, model):
+        """An event co-located with a monitored site of interest is nudged
+        toward explosion-like to surface for review."""
+        # Within ~0.01 deg (~1 km) of Natanz (33.717, 51.717)
+        event = {
+            "depth_km": None, "p_s_ratio": None, "mb_ms": None,
+            "latitude": 33.72, "longitude": 51.72,
+        }
+        result = model.assess(event)
+        loc = [c for c in result.contributing_features if c.feature_name == "location"][0]
+        assert loc.confidence > 0
+        assert loc.contribution_explosion > loc.contribution_earthquake
+        assert "Natanz" in loc.explanation
+
+    def test_far_from_site_is_neutral(self, model):
+        """An event far from any monitored site stays neutral."""
+        # (38.0, 53.0) is ~300 km from the nearest site (Semnan)
+        event = {
+            "depth_km": None, "p_s_ratio": None, "mb_ms": None,
+            "latitude": 38.0, "longitude": 53.0,
+        }
+        result = model.assess(event)
+        loc = [c for c in result.contributing_features if c.feature_name == "location"][0]
+        assert loc.contribution_explosion == loc.contribution_earthquake
+
+    def test_missing_location_zero_confidence(self, model):
+        """Missing coordinates produce zero-confidence location contribution."""
+        event = {
+            "depth_km": 10.0, "p_s_ratio": None, "mb_ms": None,
+            "latitude": None, "longitude": None,
+        }
+        result = model.assess(event)
+        loc = [c for c in result.contributing_features if c.feature_name == "location"][0]
+        assert loc.confidence == 0
 
 
 class TestTransparency:

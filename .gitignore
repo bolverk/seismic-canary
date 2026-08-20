@@ -16,6 +16,9 @@ venv/
 
 # Testing
 .pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
 
 # IDE
 .idea/

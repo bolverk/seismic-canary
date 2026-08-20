@@ -11,7 +11,7 @@ import logging
 import os
 import sys
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Tuple
+from typing import Dict
 
 import pandas as pd
 import numpy as np
@@ -49,15 +49,6 @@ def fetch_labeled_events(days: int = 365) -> pd.DataFrame:
     provider = USGSProvider()
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
-
-    # Use global search to find enough explosions
-    from src.config import RegionBounds
-
-    # Expanded region (global for explosion examples)
-    global_region = RegionBounds(
-        min_latitude=-90, max_latitude=90,
-        min_longitude=-180, max_longitude=180,
-    )
 
     # Fetch earthquakes from the Iran region
     logger.info("Fetching earthquakes from monitored region...")

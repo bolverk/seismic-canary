@@ -1,8 +1,6 @@
 """Tests for station discovery and metadata module."""
-import json
 import os
 import tempfile
-import math
 
 import pytest
 

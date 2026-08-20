@@ -100,10 +100,12 @@ The GitHub Actions workflow will automatically update `data/events.parquet` ever
 .
 ├── app.py                          # Streamlit dashboard entrypoint
 ├── requirements.txt                # Pinned Python dependencies
+├── pyproject.toml                  # Project metadata + pytest/ruff config
 ├── pages/
 │   └── methodology.py             # In-app documentation page
 ├── src/
 │   ├── config.py                  # Centralized configuration
+│   ├── geography.py               # Site-of-interest proximity helpers
 │   ├── ingestion/
 │   │   ├── seismic.py            # USGS event ingestion
 │   │   ├── stations.py           # FDSN station discovery
@@ -142,10 +144,18 @@ The rule-based model (version `baseline-001`) assesses each event on:
 
 | Feature | Explosion-like when... | Weight |
 |---------|----------------------|--------|
-| Depth | < 5 km | 30% |
-| P/S Ratio | log₁₀(P/S) > 0.5 | 30% |
-| mb - Ms | > 1.0 | 25% |
-| Location | Far from active faults | 15% |
+| Depth | < 5 km | 25% |
+| P/S Ratio | log₁₀(P/S) > 0.5 | 25% |
+| mb - Ms | > 1.0 | 20% |
+| Source mechanism | Moment tensor → earthquake; catalog explosion → explosion | 20% |
+| Location | Near a monitored site of interest (review flag) | 10% |
+
+The **location** rule uses lightweight proximity to the monitored sites of
+interest defined in `Config.SITES_OF_INTEREST` (Natanz, Fordow, Parchin,
+Semnan, Lut/Nayband, Project Midan). An event within
+`Config.SITE_PROXIMITY_KM` of one is nudged toward "explosion-like" so it
+surfaces for human review. This is a *monitoring* signal, not a seismicity
+assessment — it does not establish any connection to a site.
 
 **Alert Levels:**
 - **Level 0** — Ordinary: Consistent with tectonic earthquake
@@ -171,6 +181,19 @@ The architecture supports adding:
 - GNSS displacement measurements
 - Radionuclide observations (when publicly available)
 - Bayesian evidence fusion across modalities
+
+## Testing
+
+The test suite runs fully offline with mocked network services (USGS /
+FDSN) and synthetic waveform data:
+
+```bash
+pip install -e ".[dev]"        # or: pip install pytest
+python -m pytest tests/ -v
+```
+
+`ObsPy`-dependent waveform tests skip automatically when ObsPy is not
+installed. The repo is lint-clean with `ruff check .`.
 
 ## Contributing
 

@@ -1,7 +1,7 @@
 """Tests for USGS event ingestion module."""
 import json
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 
 import pandas as pd
@@ -9,7 +9,7 @@ import pytest
 import requests
 
 from src.ingestion.seismic import USGSProvider, USGSAPIError, SeismicProvider
-from src.config import Config, RegionBounds
+from src.config import RegionBounds
 from src.processing.events import EVENT_SCHEMA_COLUMNS
 
 
