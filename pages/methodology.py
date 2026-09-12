@@ -4,7 +4,9 @@ Explains what the system monitors, how scores are calculated,
 limitations, and data sources.
 """
 import streamlit as st
+import pandas as pd
 from src.config import Config
+from src.models.calibration import run_calibration, summarize
 
 
 st.set_page_config(page_title="Methodology - Seismic Canary", page_icon="🐤", layout="wide")
@@ -188,90 +190,128 @@ additional analysis, and the P/S ratio provides the discriminating evidence.
 
 st.header("Validation Against Known Explosions")
 st.markdown("""
-The model has been validated against a comprehensive dataset of known nuclear tests,
-large conventional explosions, and comparison earthquakes.
+The model is validated against a small, individually documented calibration set of
+known nuclear tests, large conventional explosions, and comparison earthquakes.
 
-### Nuclear Tests (9 events, 100% detection)
+**The tables and numbers below are computed live** by running each event through the
+actual `RuleBasedModel`, via `src/models/calibration.py` — the same module used by
+`scripts/validate_calibration_set.py`. Nothing here is hand-maintained; if the model
+or the calibration set changes, this page changes with it.
+""")
 
-| Event | Date | Magnitude | Depth | Model Verdict |
-|-------|------|-----------|-------|---------------|
-| **NK Nuclear Test #1** | 2006-10-09 | M4.3 | 0 km | **Level 2 — Probable Explosion** |
-| **NK Nuclear Test #2** | 2009-05-25 | M4.7 | 0 km | **Level 2 — Probable Explosion** |
-| **NK Nuclear Test #3** | 2013-02-12 | M5.1 | 0 km | **Level 2 — Probable Explosion** |
-| **NK Nuclear Test #4** | 2016-01-06 | M5.1 | 0 km | **Level 2 — Probable Explosion** |
-| **NK Nuclear Test #5** | 2016-09-09 | M5.3 | 0 km | **Level 2 — Probable Explosion** |
-| **NK Nuclear Test #6** | 2017-09-03 | M6.3 | 0 km | **Level 2 — Probable Explosion** |
-| **India Pokhran-II** | 1998-05-11 | M5.2 | 0 km | **Level 2 — Probable Explosion** |
-| **Pakistan Chagai-I** | 1998-05-28 | M4.9 | 0 km | **Level 2 — Probable Explosion** |
-| **China Lop Nor (last)** | 1996-07-29 | M4.9 | 0 km | **Level 2 — Probable Explosion** |
+_calibration_results = run_calibration()
+_summary = summarize(_calibration_results)
 
-All nuclear tests in the USGS catalog are correctly classified as Level 2 when
-their published seismic characteristics (depth=0, high P/S, high mb-Ms) are used.
 
-### Large Conventional Explosions (4 events, 100% detection)
+def _verdict(alert_level: int) -> str:
+    return f"Level {alert_level} — {Config.EVENT_LEVEL_LABELS.get(alert_level, 'Unknown')}"
 
-| Event | Date | Yield | Magnitude | Model Verdict |
-|-------|------|-------|-----------|---------------|
-| **Beirut port explosion** | 2020-08-04 | 2,750t NH₄NO₃ | M3.3 | **Level 2 — Probable Explosion** |
-| **IDF S.Lebanon detonation** | 2024-10-26 | 370t explosives | M3.6 | **Level 2 — Probable Explosion** |
-| **IDF Beaufort Castle** | 2026-07-31 | 700t explosives | M3.8 | **Level 2 — Probable Explosion** |
-| **IDF Ali al-Taher ridge** | 2026-09-10 | 1,100t explosives | M4.1 | **Level 2 — Probable Explosion** |
 
+def _category_table(category: str, extra_columns: list) -> pd.DataFrame:
+    rows = []
+    for r in _calibration_results:
+        if r.event.true_category != category:
+            continue
+        row = {"Event": r.event.name}
+        if r.event.date:
+            row["Date"] = r.event.date
+        if "magnitude" in extra_columns:
+            row["Magnitude"] = f"M{r.event.magnitude:.1f}" if r.event.magnitude is not None else "—"
+        if "depth" in extra_columns:
+            row["Depth"] = f"{r.event.depth_km:.0f} km" if r.event.depth_km is not None else "—"
+        if "p_s" in extra_columns:
+            row["P/S"] = r.event.p_s_ratio if r.event.p_s_ratio is not None else "—"
+        if "mb_ms" in extra_columns:
+            row["mb-Ms"] = r.event.mb_ms if r.event.mb_ms is not None else "—"
+        row["Model Verdict"] = _verdict(r.alert_level)
+        row["Result"] = "✅ as expected" if r.passed else f"⚠️ expected {_verdict(r.event.expected_alert_level)}"
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+nuke_total, nuke_passed = _summary["nuclear_explosion"]
+st.markdown(f"### Nuclear Tests ({nuke_total} events, {nuke_passed}/{nuke_total} correctly classified)")
+st.dataframe(_category_table("nuclear_explosion", ["magnitude", "depth"]), use_container_width=True, hide_index=True)
+st.caption(
+    "All nuclear tests use depth=0 km (well documented by CTBTO) plus the uncontested "
+    "ground-truth event_type; no per-event P/S or mb-Ms is recorded in this repo."
+)
+
+conv_total, conv_passed = _summary["conventional_explosion"]
+st.markdown(f"### Large Conventional Explosions ({conv_total} events, {conv_passed}/{conv_total} correctly classified)")
+st.dataframe(_category_table("conventional_explosion", ["magnitude", "depth"]), use_container_width=True, hide_index=True)
+st.markdown("""
 The October 2024 IDF detonation was initially misidentified as an M5.2 earthquake by
 Israel's Truaa early warning system, triggering false alerts to over 1 million people.
-The Beaufort Castle demolition (July 31, 2026) generated seismic waves equivalent to M3.8
-and was felt across large parts of Lebanon.
+""")
 
-The Ali al-Taher ridge demolition (September 10, 2026) — the largest of the four, using
-~1,100 tonnes of explosives to destroy a 2 km Hezbollah tunnel network — registered as
-M4.1 (mb) in the USGS catalog. USGS's automatic pipeline defaulted it to a fixed 10 km
-depth and tagged it `event_type=earthquake` (no moment tensor solved), which is exactly
-the naive misclassification pattern seen in the October 2024 Truaa false alarm: fed
-those raw catalog values, the model scores it Level 0 (`explosion_consistency=0.28`).
-Using the known ground truth instead — a near-surface source (~1 km) and
-`event_type=explosion` — the model correctly assigns **Level 2**
-(`explosion_consistency=0.83`, confidence 0.73). This is a reminder that the depth and
-source-mechanism fields the model trusts are only as good as the upstream catalog's
-auto-classification for small, shallow, anthropogenic sources.
+# Naive-vs-calibrated demonstration: generated for whichever calibration events
+# carry a naive_input counterpart (currently just Ali al-Taher, since it's the
+# only one of these with a real, public USGS catalog record to contrast against).
+for r in _calibration_results:
+    if r.naive_alert_level is None:
+        continue
+    st.markdown(f"""
+**{r.event.name}** ({r.event.date}) shows why ground truth matters: its raw/naive
+catalog input ({r.event.source}) scores **{_verdict(r.naive_alert_level)}**
+(`explosion_consistency={r.naive_explosion_consistency:.2f}`), while the known ground
+truth (near-surface depth, `event_type=explosion`) scores
+**{_verdict(r.alert_level)}** (`explosion_consistency={r.explosion_consistency:.2f}`,
+confidence {r.confidence:.2f}).
+""")
 
-### Comparison Earthquakes (5 events, 100% correct rejection)
+eq_total, eq_passed = _summary["earthquake"]
+st.markdown(f"### Comparison Earthquakes ({eq_total} events, {eq_passed}/{eq_total} correctly classified)")
+st.dataframe(_category_table("earthquake", ["depth", "p_s", "mb_ms"]), use_container_width=True, hide_index=True)
 
-| Event | Depth | P/S | mb-Ms | Model Verdict |
-|-------|-------|-----|-------|---------------|
-| Iran earthquake (deep) | 25 km | -0.1 | 0.2 | **Level 0 — Ordinary** |
-| Iran earthquake (moderate) | 12 km | -0.1 | 0.2 | **Level 0 — Ordinary** |
-| Turkey earthquake (deep) | 40 km | -0.1 | 0.2 | **Level 0 — Ordinary** |
-| NK natural earthquake | 8 km | -0.1 | 0.2 | **Level 0 — Ordinary** |
-| Lebanon earthquake | 18 km | -0.1 | 0.2 | **Level 0 — Ordinary** |
+for r in _calibration_results:
+    if r.event.true_category == "earthquake" and not r.passed:
+        st.markdown(f"""
+**{r.event.name}** does not land on its expected verdict — it scores
+**{_verdict(r.alert_level)}** (`explosion_consistency={r.explosion_consistency:.3f}`)
+instead of {_verdict(r.event.expected_alert_level)}. {r.summary} It is still correctly
+*not* flagged as a probable explosion (Level 2); it lands in the model's 5-10 km
+"ambiguous" depth bucket, where even earthquake-typical P/S and mb-Ms aren't enough
+to fully offset a neutral location placeholder and a weak source-mechanism signal.
+""")
 
-### Overall Performance
+st.markdown("### Overall Performance")
+overall_total, overall_passed = _summary["overall"]
+_perf_rows = [
+    ("Nuclear tests (→ Level 2)", nuke_total, nuke_passed),
+    ("Conventional explosions (→ ≥Level 1)", conv_total, conv_passed),
+    ("Earthquakes (→ Level 0)", eq_total, eq_passed),
+    ("Total", overall_total, overall_passed),
+]
+st.dataframe(
+    pd.DataFrame([
+        {"Category": cat, "Events": total, "Correctly Classified": passed,
+         "Accuracy": f"{passed / total:.0%}"}
+        for cat, total, passed in _perf_rows
+    ]),
+    use_container_width=True, hide_index=True,
+)
 
-| Category | Events | Correctly Classified | Accuracy |
-|----------|--------|---------------------|----------|
-| Nuclear tests (→ Level 2) | 9 | 9 | **100%** |
-| Conventional explosions (→ ≥Level 1) | 4 | 4 | **100%** |
-| Earthquakes (→ Level 0) | 5 | 5 | **100%** |
-| **Total** | **18** | **18** | **100%** |
-
+st.markdown("""
 ### Key Findings
 
-1. **Perfect separation** when catalog depth + published waveform features are available.
+1. **Depth is the strongest single discriminant.** All nuclear tests and large
+   conventional explosions in this calibration set are at or near 0 km depth.
 
-2. **Depth is the strongest single discriminant.** All nuclear tests and large
-   conventional explosions are at 0 km depth. This alone triggers Level 1 (Unusual).
-
-3. **P/S ratio and mb-Ms provide confirmation.** Nuclear tests show very high P/S
-   (log₁₀ ≈ 0.7-0.8) and mb-Ms > 1.3. Conventional explosions are slightly lower
-   (P/S ≈ 0.5, mb-Ms ≈ 0.8) but still clearly distinguished from earthquakes.
-
-4. **The model cannot distinguish nuclear from conventional explosions.**
+2. **The model cannot distinguish nuclear from conventional explosions.**
    Both receive Level 2. This is expected — seismology alone cannot determine
    whether an explosion is nuclear (requires radionuclide evidence).
 
-5. **P/S discrimination requires regional stations (< 200 km).** Our test with
-   the Beirut explosion showed that teleseismic (> 500 km) P/S measurements
-   degrade for events below M4. The Iran region's P/S performance depends on
-   station availability in Turkey, Turkmenistan, and the Persian Gulf.
+3. **Catalog auto-classification can mislead the model.** Small, shallow,
+   anthropogenic events (like the Lebanon tunnel demolitions above) often aren't
+   in the USGS catalog at all, or get a default fixed depth and a naive
+   `event_type=earthquake` tag when they are. The model is only as good as the
+   ground truth it's given.
+
+4. **A moderate "ambiguous" depth (5-10 km) plus a neutral location placeholder
+   can push even a textbook earthquake to Level 1**, as shown above. Run
+   `python scripts/validate_calibration_set.py` for the full rule-by-rule
+   breakdown of every calibration event.
 
 ### Implications for Iran Monitoring
 
@@ -280,22 +320,16 @@ auto-classification for small, shallow, anthropogenic sources.
 - High mb-Ms (> 1.0) provides independent confirmation
 - The system would detect an explosion but cannot confirm it is nuclear
 - Regional stations (KSDI, CSS, EIL, ANTO) are critical for P/S at distances < 500 km
-
-### References
-
-- [CTBTO: Six North Korean Nuclear Tests (2006-2017)](https://www.ctbto.org/our-work/detecting-nuclear-tests)
-- [Yield Estimation of the 2020 Beirut Explosion](https://www.nature.com/articles/s41598-021-93690-y) (Nature, 2021)
-- [P/S Spectral Ratios for Beirut Explosion](https://pubs.geoscienceworld.org/srl/article-pdf/5633950/srl-2021363.1.pdf) (SRL, 2022)
-- [CTBTO Analysis of IDF 370t Detonation](https://conferences.ctbto.org/event/30/contributions/5650/contribution.pdf) (SnT2025)
-- [Truaa EEW False Alert from IDF Explosion](https://www.nature.com/articles/s41598-026-50414-4) (Nature, 2026)
-- [IDF Beaufort Castle 700t Explosion](https://today.lorientlejour.com/article/1543107/) (L'Orient-Le Jour, 2026)
-- [Israel Says It Destroyed Hezbollah Base in Lebanon's Ali al-Taher Ridge](https://www.aljazeera.com/news/2026/9/10/israel-says-it-destroyed-hezbollah-base-in-lebanons-ali-al-taher-ridge) (Al Jazeera, 2026)
-- [Israel Blows Up Hezbollah Tunnels with 1,100 Tonnes of Explosives](https://www.thenationalnews.com/news/mena/2026/09/10/israel-says-south-lebanon-security-zone-complete-after-blowing-up-hezbollah-tunnels-at-ali-al-taher-ridge/) (The National, 2026)
-- [Massive Israeli Explosions on Ali Taher Cause Shockwave Measuring 4.1 on Richter Scale](https://today.lorientlejour.com/article/1547193/massive-israeli-explosions-on-ali-taher-cause-shockwave-measuring-41-on-richter-scale-israeli-media-says-over-1100-tonnes-of-explosives-used.html) (L'Orient Today, 2026)
-- [India Pokhran-II Seismic Analysis](https://nuke.fas.org/guide/india/nuke/981100-barc.htm) (BARC, 1998)
-- [Pakistan Chagai-I Seismological Identification](https://academic.oup.com/gji/article/150/1/153/591564) (GJI, 2002)
-- [China Lop Nor Test Locations](https://pubs.geoscienceworld.org/ssa/bssa/article/94/5/1879/121026/) (BSSA, 2004)
 """)
+
+st.markdown("### References")
+_seen_urls = set()
+for r in _calibration_results:
+    for title, url in r.event.references:
+        if url in _seen_urls:
+            continue
+        _seen_urls.add(url)
+        st.markdown(f"- [{title}]({url})")
 
 
 st.header("Limitations")
