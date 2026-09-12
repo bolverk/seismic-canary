@@ -208,18 +208,31 @@ large conventional explosions, and comparison earthquakes.
 All nuclear tests in the USGS catalog are correctly classified as Level 2 when
 their published seismic characteristics (depth=0, high P/S, high mb-Ms) are used.
 
-### Large Conventional Explosions (3 events, 100% detection)
+### Large Conventional Explosions (4 events, 100% detection)
 
 | Event | Date | Yield | Magnitude | Model Verdict |
 |-------|------|-------|-----------|---------------|
 | **Beirut port explosion** | 2020-08-04 | 2,750t NH₄NO₃ | M3.3 | **Level 2 — Probable Explosion** |
 | **IDF S.Lebanon detonation** | 2024-10-26 | 370t explosives | M3.6 | **Level 2 — Probable Explosion** |
 | **IDF Beaufort Castle** | 2026-07-31 | 700t explosives | M3.8 | **Level 2 — Probable Explosion** |
+| **IDF Ali al-Taher ridge** | 2026-09-10 | 1,100t explosives | M4.1 | **Level 2 — Probable Explosion** |
 
 The October 2024 IDF detonation was initially misidentified as an M5.2 earthquake by
 Israel's Truaa early warning system, triggering false alerts to over 1 million people.
 The Beaufort Castle demolition (July 31, 2026) generated seismic waves equivalent to M3.8
 and was felt across large parts of Lebanon.
+
+The Ali al-Taher ridge demolition (September 10, 2026) — the largest of the four, using
+~1,100 tonnes of explosives to destroy a 2 km Hezbollah tunnel network — registered as
+M4.1 (mb) in the USGS catalog. USGS's automatic pipeline defaulted it to a fixed 10 km
+depth and tagged it `event_type=earthquake` (no moment tensor solved), which is exactly
+the naive misclassification pattern seen in the October 2024 Truaa false alarm: fed
+those raw catalog values, the model scores it Level 0 (`explosion_consistency=0.28`).
+Using the known ground truth instead — a near-surface source (~1 km) and
+`event_type=explosion` — the model correctly assigns **Level 2**
+(`explosion_consistency=0.83`, confidence 0.73). This is a reminder that the depth and
+source-mechanism fields the model trusts are only as good as the upstream catalog's
+auto-classification for small, shallow, anthropogenic sources.
 
 ### Comparison Earthquakes (5 events, 100% correct rejection)
 
@@ -236,9 +249,9 @@ and was felt across large parts of Lebanon.
 | Category | Events | Correctly Classified | Accuracy |
 |----------|--------|---------------------|----------|
 | Nuclear tests (→ Level 2) | 9 | 9 | **100%** |
-| Conventional explosions (→ ≥Level 1) | 3 | 3 | **100%** |
+| Conventional explosions (→ ≥Level 1) | 4 | 4 | **100%** |
 | Earthquakes (→ Level 0) | 5 | 5 | **100%** |
-| **Total** | **17** | **17** | **100%** |
+| **Total** | **18** | **18** | **100%** |
 
 ### Key Findings
 
@@ -276,6 +289,9 @@ and was felt across large parts of Lebanon.
 - [CTBTO Analysis of IDF 370t Detonation](https://conferences.ctbto.org/event/30/contributions/5650/contribution.pdf) (SnT2025)
 - [Truaa EEW False Alert from IDF Explosion](https://www.nature.com/articles/s41598-026-50414-4) (Nature, 2026)
 - [IDF Beaufort Castle 700t Explosion](https://today.lorientlejour.com/article/1543107/) (L'Orient-Le Jour, 2026)
+- [Israel Says It Destroyed Hezbollah Base in Lebanon's Ali al-Taher Ridge](https://www.aljazeera.com/news/2026/9/10/israel-says-it-destroyed-hezbollah-base-in-lebanons-ali-al-taher-ridge) (Al Jazeera, 2026)
+- [Israel Blows Up Hezbollah Tunnels with 1,100 Tonnes of Explosives](https://www.thenationalnews.com/news/mena/2026/09/10/israel-says-south-lebanon-security-zone-complete-after-blowing-up-hezbollah-tunnels-at-ali-al-taher-ridge/) (The National, 2026)
+- [Massive Israeli Explosions on Ali Taher Cause Shockwave Measuring 4.1 on Richter Scale](https://today.lorientlejour.com/article/1547193/massive-israeli-explosions-on-ali-taher-cause-shockwave-measuring-41-on-richter-scale-israeli-media-says-over-1100-tonnes-of-explosives-used.html) (L'Orient Today, 2026)
 - [India Pokhran-II Seismic Analysis](https://nuke.fas.org/guide/india/nuke/981100-barc.htm) (BARC, 1998)
 - [Pakistan Chagai-I Seismological Identification](https://academic.oup.com/gji/article/150/1/153/591564) (GJI, 2002)
 - [China Lop Nor Test Locations](https://pubs.geoscienceworld.org/ssa/bssa/article/94/5/1879/121026/) (BSSA, 2004)
