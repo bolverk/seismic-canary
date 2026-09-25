@@ -7,7 +7,7 @@ import json
 import logging
 import math
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import List, Optional, Dict
 

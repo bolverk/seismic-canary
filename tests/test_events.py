@@ -2,9 +2,6 @@
 import os
 import tempfile
 
-import pandas as pd
-import pytest
-from datetime import datetime, timezone
 
 from src.processing.events import (
     EVENT_SCHEMA_COLUMNS,
@@ -56,7 +53,7 @@ class TestLoadSaveRoundTrip:
                           "longitude", "depth_km", "magnitude", "magnitude_type"]
             subset_df = sample_events_df[subset_cols].copy()
             subset_df.to_parquet(path, index=False)
-            
+
             # Load should still have all columns
             loaded = load_events(path)
             assert list(loaded.columns) == EVENT_SCHEMA_COLUMNS
@@ -69,7 +66,7 @@ class TestDeduplication:
         # Create "new" version of same event with updated magnitude
         new_event = sample_events_df.iloc[[0]].copy()
         new_event.at[new_event.index[0], "magnitude"] = 4.5
-        
+
         result = deduplicate_events(existing, new_event)
         # Should still have same number of rows
         assert len(result) == len(existing)
@@ -81,14 +78,14 @@ class TestDeduplication:
         existing = sample_events_df.iloc[[0]].copy()  # usgs provider
         new_event = existing.copy()
         new_event.at[new_event.index[0], "provider"] = "emsc"
-        
+
         result = deduplicate_events(existing, new_event)
         assert len(result) == 2
 
     def test_new_event_added(self, sample_events_df):
         existing = sample_events_df.iloc[:2].copy()
         new_event = sample_events_df.iloc[[2]].copy()
-        
+
         result = deduplicate_events(existing, new_event)
         assert len(result) == 3
 
@@ -105,9 +102,9 @@ class TestDeduplication:
     def test_first_seen_preserved_on_update(self, sample_events_df):
         existing = sample_events_df.iloc[[0]].copy()
         original_first_seen = existing.iloc[0]["first_seen"]
-        
+
         new_event = existing.copy()
         new_event.at[new_event.index[0], "magnitude"] = 4.5
-        
+
         result = deduplicate_events(existing, new_event)
         assert result.iloc[0]["first_seen"] == original_first_seen

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 
 from src.config import Config
+from src.geography import is_near_site_of_interest
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 class RuleContribution:
     """Contribution of a single rule to the assessment."""
     feature_name: str
-    raw_value: Optional[float]
+    raw_value: Optional[Any]
     contribution_earthquake: float
     contribution_explosion: float
     confidence: float
@@ -342,10 +343,14 @@ class RuleBasedModel(AnomalyModel):
         """
         # Magnitude types that imply a moment tensor was solved
         moment_tensor_types = {"mwr", "mww", "mwb", "mwc", "mw"}
+        # Body/local magnitude types without a tensor solution
+        body_wave_types = {"mb", "ml", "md", "mlg"}
+
+        # Normalize once — USGS magType is not guaranteed to be lower-case
+        mag_lower = magnitude_type.lower() if magnitude_type else None
 
         has_moment_tensor = (
-            magnitude_type is not None
-            and magnitude_type.lower() in moment_tensor_types
+            mag_lower is not None and mag_lower in moment_tensor_types
         )
 
         # Event type from catalog review
@@ -372,7 +377,7 @@ class RuleBasedModel(AnomalyModel):
             ex_score = 0.9
             confidence = 0.9
             explanation = f"Catalog classification: {event_type}"
-        elif is_classified_earthquake and magnitude_type in ("mb", "ml", "md"):
+        elif is_classified_earthquake and mag_lower in body_wave_types:
             # Body-wave or local magnitude without tensor — mild earthquake indicator
             eq_score = 0.6
             ex_score = 0.4
@@ -404,10 +409,18 @@ class RuleBasedModel(AnomalyModel):
     def _assess_location(
         self, latitude: Optional[float], longitude: Optional[float]
     ) -> RuleContribution:
-        """Assess location relative to known seismicity.
+        """Assess location relative to monitored sites of interest.
 
-        Placeholder: future implementation will use known fault database.
-        For now, returns low-confidence neutral assessment.
+        A location rule based on an authoritative fault/seismicity database
+        is not yet available. In the meantime we use a lightweight,
+        clearly-labeled *monitoring* signal: events co-located with a
+        monitored site of interest (nuclear/military facility) within
+        ``Config.SITE_PROXIMITY_KM`` are nudged toward "explosion-like"
+        so they surface for human review.
+
+        Confidence is deliberately kept low (0.2) so that location alone
+        never crosses the "insufficient data" threshold — consistent with
+        the pre-existing placeholder contract.
         """
         if latitude is None or longitude is None:
             return RuleContribution(
@@ -419,16 +432,31 @@ class RuleBasedModel(AnomalyModel):
                 explanation="Location not available",
             )
 
-        # Placeholder: neutral assessment with low confidence
-        # TODO: Implement distance-to-fault calculation using
-        # publicly available fault database for Iran region
+        is_near, site, distance = is_near_site_of_interest(latitude, longitude)
+
+        if is_near and site is not None and distance is not None:
+            return RuleContribution(
+                feature_name="location",
+                raw_value={
+                    "site": site["name"],
+                    "distance_km": round(distance, 1),
+                },
+                contribution_earthquake=0.4,
+                contribution_explosion=0.6,
+                confidence=0.2,
+                explanation=(
+                    f"Within {Config.SITE_PROXIMITY_KM:.0f} km of monitored site "
+                    f"'{site['name']}' ({distance:.1f} km) — flagged for review"
+                ),
+            )
+
         return RuleContribution(
             feature_name="location",
             raw_value=None,
             contribution_earthquake=0.5,
             contribution_explosion=0.5,
             confidence=0.2,
-            explanation="Location assessment not yet implemented (placeholder)",
+            explanation="Not co-located with a monitored site of interest",
         )
 
     def _generate_summary(

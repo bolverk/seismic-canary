@@ -8,7 +8,7 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Dict, Any
+from typing import Optional, Dict, Any
 
 import pandas as pd
 import requests

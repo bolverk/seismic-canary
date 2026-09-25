@@ -6,8 +6,8 @@ and computes P/S amplitude ratios.
 """
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import List, Optional, Tuple, Dict
+from datetime import datetime
+from typing import List, Optional
 
 import numpy as np
 

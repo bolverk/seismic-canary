@@ -1,4 +1,6 @@
 """Tests for waveform retrieval and P/S measurement."""
+import importlib.util
+
 import numpy as np
 import pytest
 from datetime import datetime, timezone
@@ -8,7 +10,6 @@ from src.processing.waveforms import (
     process_waveform,
     aggregate_picks,
     PickResult,
-    WaveformResult,
 )
 
 
@@ -40,11 +41,7 @@ class TestEligibility:
         ) is True
 
 
-try:
-    import obspy
-    HAS_OBSPY = True
-except ImportError:
-    HAS_OBSPY = False
+HAS_OBSPY = importlib.util.find_spec("obspy") is not None
 
 
 @pytest.mark.skipif(not HAS_OBSPY, reason="ObsPy not installed")

@@ -148,22 +148,7 @@ def create_map(events: pd.DataFrame) -> folium.Map:
     m.get_root().html.add_child(folium.Element(legend_html))
 
     # Sites of interest - known nuclear/military facilities
-    sites_of_interest = [
-        {"name": "Natanz", "lat": 33.717, "lon": 51.717,
-         "desc": "Uranium enrichment facility (underground)"},
-        {"name": "Fordow", "lat": 34.885, "lon": 50.996,
-         "desc": "Underground uranium enrichment plant, near Qom"},
-        {"name": "Parchin", "lat": 35.520, "lon": 51.780,
-         "desc": "Military complex, suspected weapons-related experiments"},
-        {"name": "Semnan", "lat": 35.235, "lon": 53.921,
-         "desc": "Space/missile center; Project Midan test area nearby"},
-        {"name": "Lut Desert (Nayband area)", "lat": 33.5, "lon": 57.5,
-         "desc": "Remote desert; identified as potential test site in IAEA archive"},
-        {"name": "Project Midan (SE of Semnan)", "lat": 34.8, "lon": 54.5,
-         "desc": "Underground nuclear test site development (per IAEA archive)"},
-    ]
-
-    for site in sites_of_interest:
+    for site in Config.SITES_OF_INTEREST:
         folium.Marker(
             location=[site["lat"], site["lon"]],
             popup=folium.Popup(
