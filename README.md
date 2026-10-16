@@ -158,12 +158,14 @@ The rule-based model (version `baseline-001`) assesses each event on:
 | P/S Ratio | log₁₀(P/S) > 0.5 | 25% |
 | mb - Ms | > 1.0 | 20% |
 | Source mechanism | Catalog "explosion", no moment tensor | 20% |
-| Location | Far from active faults | 10% |
+| Location | Within ~20 km of a known explosion site | 10% |
 
 **Alert Levels:**
 - **Level 0** — Ordinary: Consistent with tectonic earthquake
 - **Level 1** — Unusual: Some anomalous features
-- **Level 2** — Probable Explosion: explosion score ≥ 0.6 *and* at least one
+- **Level 2** — Probable Explosion: either the catalog classified the event as
+  an explosion, or it sits within ~20 km of a known explosion site at a
+  non-deep depth, or the explosion score is ≥ 0.6 *and* at least one
   discriminant other than catalog depth agrees (P/S, mb-Ms, or a catalog
   "explosion" classification)
 - **Level 3** — Corroborated: Multi-sensor evidence (future)

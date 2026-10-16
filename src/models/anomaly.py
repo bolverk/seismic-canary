@@ -12,11 +12,23 @@ establish that an event was nuclear.
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from math import asin, cos, radians, sin, sqrt
 from typing import Dict, List, Optional, Any
 
 from src.config import Config
 
 logger = logging.getLogger(__name__)
+
+_EARTH_RADIUS_KM = 6371.0
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance between two points, in kilometres."""
+    phi1, phi2 = radians(lat1), radians(lat2)
+    dphi = radians(lat2 - lat1)
+    dlambda = radians(lon2 - lon1)
+    a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
+    return 2 * _EARTH_RADIUS_KM * asin(sqrt(a))
 
 
 def _is_missing(value: Any) -> bool:
@@ -34,6 +46,26 @@ def _is_missing(value: Any) -> bool:
         return bool(value != value)
     except (TypeError, ValueError):
         return False
+
+
+_EXPLOSION_EVENT_TYPES = (
+    "explosion",
+    "nuclear explosion",
+    "quarry blast",
+    "mining explosion",
+    "chemical explosion",
+)
+
+
+def _is_explosion_classification(event_type: Any) -> bool:
+    """True when a catalog reviewed the event and called it an explosion.
+
+    This is an agency's own waveform-based judgement, so it outweighs our
+    depth heuristic — the event need not also *look* shallow to us.
+    """
+    if _is_missing(event_type):
+        return False
+    return str(event_type).strip().lower() in _EXPLOSION_EVENT_TYPES
 
 
 @dataclass
@@ -191,9 +223,35 @@ class RuleBasedModel(AnomalyModel):
 
         # Determine alert level
         insufficient_data = confidence < 0.25
+        classified_explosion = _is_explosion_classification(event.get("event_type"))
+
+        # An event sitting on a watchlist site whose catalog depth does not
+        # exclude a shallow source. Tunnel demolitions, quarry shots and port
+        # blasts are surface/near-surface, yet catalogs routinely fall back to
+        # an 8-10 km depth when the source is poorly constrained — so the depth
+        # must not be read as evidence against an explosion here.
+        depth_km = event.get("depth_km")
+        near_explosion_site = False
+        if not (insufficient_data or classified_explosion):
+            if not (_is_missing(event.get("latitude")) or _is_missing(event.get("longitude"))):
+                _, nearest_km = self._nearest_explosion_site(
+                    event.get("latitude"), event.get("longitude")
+                )
+                not_deep = _is_missing(depth_km) or float(depth_km) < 10.0
+                near_explosion_site = (
+                    nearest_km <= Config.KNOWN_EXPLOSION_RADIUS_KM and not_deep
+                )
+
         if insufficient_data:
             alert_level = -1  # insufficient data
+        elif classified_explosion:
+            # A catalog that reviewed the event and classified it as an
+            # explosion is the strongest evidence we get, so it stands even
+            # when a fixed-default depth (e.g. 10 km) drags the score down.
+            alert_level = 2
         elif explosion_score >= Config.ALERT_LEVEL_THRESHOLDS[2]:
+            alert_level = 2
+        elif near_explosion_site:
             alert_level = 2
         elif explosion_score >= Config.ALERT_LEVEL_THRESHOLDS[1]:
             alert_level = 1
@@ -232,8 +290,9 @@ class RuleBasedModel(AnomalyModel):
         )
 
     # Rules able to corroborate an explosion claim independently of depth.
-    # The location rule is a placeholder and is deliberately excluded.
-    _CORROBORATING_RULES = ("p_s_ratio", "mb_ms", "source_mechanism")
+    # Distance to a known explosion site counts; the neutral location
+    # placeholder does not (it never leans explosion).
+    _CORROBORATING_RULES = ("p_s_ratio", "mb_ms", "source_mechanism", "location")
 
     def _has_explosion_corroboration(
         self, contributions: List[RuleContribution]
@@ -406,11 +465,7 @@ class RuleBasedModel(AnomalyModel):
         is_classified_earthquake = (
             event_type is not None and event_type.lower() == "earthquake"
         )
-        is_classified_explosion = (
-            event_type is not None
-            and event_type.lower() in ("explosion", "nuclear explosion", "quarry blast",
-                                        "mining explosion", "chemical explosion")
-        )
+        is_classified_explosion = _is_explosion_classification(event_type)
 
         if has_moment_tensor:
             # Double-couple source confirmed — strongly favors earthquake
@@ -455,13 +510,26 @@ class RuleBasedModel(AnomalyModel):
             explanation=explanation,
         )
 
+    def _nearest_explosion_site(
+        self, latitude: float, longitude: float
+    ) -> "tuple[Optional[str], float]":
+        """Name and distance (km) of the closest known explosion site."""
+        nearest_name, nearest_km = None, float("inf")
+        for name, site_lat, site_lon in Config.KNOWN_EXPLOSION_SITES:
+            distance = _haversine_km(latitude, longitude, site_lat, site_lon)
+            if distance < nearest_km:
+                nearest_name, nearest_km = name, distance
+        return nearest_name, nearest_km
+
     def _assess_location(
         self, latitude: Optional[float], longitude: Optional[float]
     ) -> RuleContribution:
-        """Assess location relative to known seismicity.
+        """Assess proximity to a site with confirmed explosion activity.
 
-        Placeholder: future implementation will use known fault database.
-        For now, returns low-confidence neutral assessment.
+        A shallow event near a site where explosions are independently known
+        to occur is a genuine explosion indicator in a way that a shallow
+        event in ordinary seismic country is not. Events away from every
+        watchlist site fall back to the neutral placeholder.
         """
         if _is_missing(latitude) or _is_missing(longitude):
             return RuleContribution(
@@ -473,12 +541,26 @@ class RuleBasedModel(AnomalyModel):
                 explanation="Location not available",
             )
 
-        # Placeholder: neutral assessment with low confidence
-        # TODO: Implement distance-to-fault calculation using
-        # publicly available fault database for Iran region
+        nearest_name, nearest_km = self._nearest_explosion_site(latitude, longitude)
+
+        if nearest_km <= Config.KNOWN_EXPLOSION_RADIUS_KM:
+            return RuleContribution(
+                feature_name="location",
+                raw_value=nearest_km,
+                contribution_earthquake=0.2,
+                contribution_explosion=0.8,
+                confidence=0.5,
+                explanation=(
+                    f"Within {nearest_km:.0f} km of a known explosion site "
+                    f"({nearest_name})"
+                ),
+            )
+
+        # Placeholder away from watchlist sites: neutral, low confidence.
+        # TODO: distance-to-fault using a public fault database.
         return RuleContribution(
             feature_name="location",
-            raw_value=None,
+            raw_value=nearest_km,
             contribution_earthquake=0.5,
             contribution_explosion=0.5,
             confidence=0.2,

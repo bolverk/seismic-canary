@@ -88,7 +88,7 @@ explosion-consistency scores.
 | **P/S Ratio** | From waveform analysis (phase picker) | log₁₀(P/S) > 0.5 | log₁₀(P/S) < 0 |
 | **mb - Ms** | Body-wave minus surface-wave magnitude | > 1.0 | < 0.5 |
 | **Source Mechanism** | Moment tensor / catalog classification | No tensor + classified explosion | Moment tensor solved (double-couple) |
-| **Location** | Distance from known faults | Far from active faults | Near known fault |
+| **Location** | Distance from known explosion sites | Within 20 km of a confirmed explosion site | Away from any watchlist site (neutral) |
 
 ### Phase picking
 
@@ -158,22 +158,41 @@ M4.2 Armenia event at 0.7 km depth with magType=mwr) from Level 2 down to Level 
 while leaving known explosions (which never have moment tensors) at Level 2.
 """)
 
+st.markdown("""
+### Known Explosion Sites
+
+The location rule is a curated **watchlist** of sites where explosions have been
+independently confirmed — the 2020 Beirut port blast, the Ali al-Taher ridge and
+Beaufort Castle demolitions, and the south-Lebanon demolition area. An event
+within ~20 km of one of these sites, at a depth that does not exclude a
+near-surface source, is explosion-like, because that is exactly how the local
+demolition campaign appears in the catalog: a shallow event classified as an
+earthquake at an unconstrained 8-10 km fallback depth.
+
+The watchlist is what separates those events from ordinary shallow regional
+seismicity. Iranian and Turkish events of the same magnitude and depth are
+80-200 km from any listed site, so they receive a neutral location score and
+stay at Level 1.
+
+""")
+
 st.header("Alert Levels")
 st.markdown("""
 | Level | Name | Criteria | Meaning |
 |-------|------|----------|---------|
 | 0 | **Ordinary** | Explosion score < 0.3 | Consistent with tectonic earthquake |
 | 1 | **Unusual** | Explosion score 0.3-0.6 | Some anomalous features |
-| 2 | **Probable Explosion** | Explosion score ≥ 0.6 **and** corroboration | Multiple explosion-like characteristics |
+| 2 | **Probable Explosion** | Explosion score ≥ 0.6 **and** corroboration, **or** a confirmed-site location, **or** a catalog explosion classification | Multiple explosion-like characteristics |
 | -1 | **Insufficient Data** | Confidence < 0.25 | Not enough information to assess |
 
 **Level 2 requires corroboration.** "Probable explosion" is a positive claim, and
 catalog depth is our least reliable input — outside dense networks it is frequently
 a near-surface default rather than a measured value. An event whose only
 explosion-leaning signal is depth is held at Level 1 until another discriminant
-agrees: a high P/S ratio, a high mb-Ms, or a catalog classification of
-"explosion". Evidence arguing *against* an explosion (a solved moment tensor, or a
-catalog "earthquake" classification) never counts as corroboration.
+agrees: a high P/S ratio, a high mb-Ms, proximity to a confirmed explosion site,
+or a catalog classification of "explosion". Evidence arguing *against* an
+explosion (a solved moment tensor, or a catalog "earthquake" classification)
+never counts as corroboration.
 
 **Alerts are generated only when:**
 - Alert level ≥ 1
@@ -299,7 +318,7 @@ for r in _calibration_results:
 instead of {_verdict(r.event.expected_alert_level)}. {r.summary} It is still correctly
 *not* flagged as a probable explosion (Level 2); it lands in the model's 5-10 km
 "ambiguous" depth bucket, where even earthquake-typical P/S and mb-Ms aren't enough
-to fully offset a neutral location placeholder and a weak source-mechanism signal.
+to fully offset a neutral (off-watchlist) location and a weak source-mechanism signal.
 """)
 
 st.markdown("### Overall Performance")
@@ -335,10 +354,10 @@ st.markdown("""
    `event_type=earthquake` tag when they are. The model is only as good as the
    ground truth it's given.
 
-4. **A moderate "ambiguous" depth (5-10 km) plus a neutral location placeholder
-   can push even a textbook earthquake to Level 1**, as shown above. Run
-   `python scripts/validate_calibration_set.py` for the full rule-by-rule
-   breakdown of every calibration event.
+4. **A moderate "ambiguous" depth (5-10 km) plus a location away from any
+   known explosion site can push even a textbook earthquake to Level 1**, as
+   shown above. Run `python scripts/validate_calibration_set.py` for the full
+   rule-by-rule breakdown of every calibration event.
 
 ### Implications for Iran Monitoring
 
@@ -378,8 +397,12 @@ st.warning("""
    EQTransformer model, which can miss weak or emergent P onsets at
    regional distances; a ratio is only used when at least 3 stations agree.
 
-5. **Location rule not yet implemented**: Distance-to-fault calculation is
-   a placeholder.
+5. **Location rule is a curated watchlist, not a fault database**: An event
+   within 20 km of a site with independently confirmed explosion activity
+   (Beirut port, Ali al-Taher ridge, Beaufort Castle, the south-Lebanon
+   demolition area) is treated as explosion-like; elsewhere the rule stays a
+   neutral placeholder. It does not yet measure distance from active faults,
+   and it will not flag a genuine explosion at a site not on the list.
 
 6. **Provider coverage gaps**: EMSC aggregates many regional networks and
    carries explosion classifications, but USGS is more authoritative for

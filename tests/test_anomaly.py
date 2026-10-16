@@ -303,3 +303,100 @@ class TestLevel2NeedsCorroboration:
         result = model.assess(event)
         assert result.alert_level == 1
         assert "depth alone" in result.summary
+
+
+class TestKnownExplosionSites:
+    """Location watchlist: proximity to a site with confirmed explosions.
+
+    The south-Lebanon demolition campaign is the case that motivated this:
+    its events are catalogued as earthquakes at an 8-10 km fallback depth,
+    yet sit within ~15 km of sites where explosions were independently
+    confirmed. Ordinary shallow seismicity (e.g. Iranian events) is 80-200 km
+    from any such site and must not be promoted.
+    """
+
+    BEIRUT = (33.901, 35.519)
+    ALI_AL_TAHER = (33.3321, 35.3544)
+    IRAN = (36.85, 49.51)
+
+    @staticmethod
+    def _loc(result):
+        return next(
+            c for c in result.contributing_features if c.feature_name == "location"
+        )
+
+    def test_haversine_known_distance(self):
+        from src.models.anomaly import _haversine_km
+
+        assert _haversine_km(33.901, 35.519, 33.901, 35.519) == 0.0
+        # Beirut -> Ali al-Taher is roughly 66 km.
+        d = _haversine_km(*self.BEIRUT, *self.ALI_AL_TAHER)
+        assert 60.0 < d < 72.0
+
+    def test_location_near_site_leans_explosion(self, model):
+        result = model.assess(
+            {"depth_km": 6.0, "latitude": self.ALI_AL_TAHER[0],
+             "longitude": self.ALI_AL_TAHER[1]}
+        )
+        loc = self._loc(result)
+        assert loc.confidence > 0
+        assert loc.contribution_explosion > loc.contribution_earthquake
+
+    def test_location_far_from_sites_is_neutral_placeholder(self, model):
+        result = model.assess(
+            {"depth_km": 6.0, "latitude": self.IRAN[0], "longitude": self.IRAN[1]}
+        )
+        loc = self._loc(result)
+        assert loc.contribution_explosion == loc.contribution_earthquake
+
+    def test_event_just_outside_radius_is_neutral(self, model):
+        # ~33 km north of Beirut, well inside Lebanon but outside the radius,
+        # and not near any other watchlist site.
+        result = model.assess(
+            {"depth_km": 6.0, "latitude": 34.20, "longitude": 35.52}
+        )
+        loc = self._loc(result)
+        assert loc.contribution_explosion == loc.contribution_earthquake
+
+    def test_near_site_reaches_level_2_despite_moderate_depth(self, model):
+        # The 2024-10-26 detention shape: catalogued earthquake, unconstrained
+        # 8 km depth, but ~2 km from a confirmed site.
+        event = {
+            "depth_km": 8.0, "event_type": "earthquake", "magnitude_type": "ml",
+            "latitude": 33.35, "longitude": 35.36,
+        }
+        assert model.assess(event).alert_level == 2
+
+    def test_near_site_but_deep_is_not_promoted(self, model):
+        event = {
+            "depth_km": 15.0, "event_type": "earthquake", "magnitude_type": "ml",
+            "latitude": 33.35, "longitude": 35.36,
+        }
+        assert model.assess(event).alert_level < 2
+
+    def test_shallow_far_from_sites_stays_level_1(self, model):
+        # A very shallow event in Iran is still only "unusual": depth alone
+        # never corroborates an explosion.
+        event = {"depth_km": 0.5, "latitude": self.IRAN[0], "longitude": self.IRAN[1]}
+        assert model.assess(event).alert_level == 1
+
+    def test_classified_explosion_overrides_default_depth(self, model):
+        # EMSC catalogued this as a chemical explosion but handed it a fixed
+        # 10 km depth; the classification must still reach Level 2.
+        event = {
+            "depth_km": 10.0, "event_type": "chemical explosion",
+            "magnitude_type": "mb",
+            "latitude": 33.33, "longitude": 35.33,
+        }
+        assert model.assess(event).alert_level == 2
+
+    def test_classified_explosion_works_far_from_sites(self, model):
+        event = {
+            "depth_km": 10.0, "event_type": "explosion", "magnitude_type": "mb",
+            "latitude": self.IRAN[0], "longitude": self.IRAN[1],
+        }
+        assert model.assess(event).alert_level == 2
+
+    def test_deep_event_far_from_sites_stays_ordinary(self, model):
+        event = {"depth_km": 30.0, "latitude": self.IRAN[0], "longitude": self.IRAN[1]}
+        assert model.assess(event).alert_level == 0

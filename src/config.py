@@ -96,6 +96,20 @@ class Config:
     # explosion-leaning signal is depth, report the event at most as
     # "unusual" (level 1) until another discriminant corroborates it.
     ALERT_LEVEL2_REQUIRE_CORROBORATION = True
+
+    # Curated watchlist of sites with independently confirmed explosion
+    # activity (see src/models/calibration.py for the sources). An event
+    # within KNOWN_EXPLOSION_RADIUS_KM of one of these sites gets an
+    # explosion-leaning location contribution, which is the discriminator
+    # between the south-Lebanon demolition campaign and ordinary shallow
+    # regional seismicity (e.g. Iran) that is 80-200 km from any such site.
+    KNOWN_EXPLOSION_SITES = (
+        ("Beirut port", 33.901, 35.519),
+        ("Ali al-Taher ridge", 33.3321, 35.3544),
+        ("South Lebanon (IDF demolition)", 33.30, 35.30),
+        ("Beaufort Castle", 33.36, 35.53),
+    )
+    KNOWN_EXPLOSION_RADIUS_KM = 20.0
     
     # Alert generation criteria
     ALERT_MIN_STATION_COUNT = 3
