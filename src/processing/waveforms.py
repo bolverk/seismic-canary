@@ -86,6 +86,7 @@ def retrieve_waveforms(
     post_seconds: float = Config.FDSN_WAVEFORM_POST_SECONDS,
     providers: Optional[List[str]] = None,
     target_traces: Optional[int] = None,
+    max_attempts: Optional[int] = None,
 ) -> Optional[object]:
     """Retrieve waveform data from FDSN for given stations.
 
@@ -99,6 +100,9 @@ def retrieve_waveforms(
         providers: FDSN provider names.
         target_traces: Stop querying once this many distinct stations have
             returned data (bounds the number of HTTP requests per event).
+        max_attempts: Hard cap on the total number of waveform requests made
+            across all providers and stations, so an event with no open data
+            cannot trigger an unbounded crawl of the candidate pool.
 
     Returns:
         ObsPy Stream object with waveforms, or None on failure.
@@ -118,9 +122,12 @@ def retrieve_waveforms(
 
     all_traces = Stream()
     stations_with_data = set()
+    attempts = 0
 
     for provider_name in providers:
         if target_traces and len(stations_with_data) >= target_traces:
+            break
+        if max_attempts is not None and attempts >= max_attempts:
             break
         try:
             client = Client(provider_name)
@@ -129,6 +136,9 @@ def retrieve_waveforms(
             continue
 
         for station in stations:
+            if max_attempts is not None and attempts >= max_attempts:
+                break
+            attempts += 1
             try:
                 st = client.get_waveforms(
                     network=station.network,
@@ -614,7 +624,12 @@ def analyze_event_waveforms(
 
     # Retrieve waveforms
     stream = retrieve_waveforms(
-        event_lat, event_lon, event_time, stations, target_traces=target_traces
+        event_lat,
+        event_lon,
+        event_time,
+        stations,
+        target_traces=target_traces,
+        max_attempts=Config.WAVEFORM_MAX_ATTEMPTS,
     )
 
     if stream is None:

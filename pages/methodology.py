@@ -97,8 +97,14 @@ P and S arrival times are located with a pretrained deep-learning picker
 station waveforms, and the P/S amplitude ratio is measured from the picked
 onsets. When SeisBench is unavailable, or a station lacks a full
 three-component set, the pipeline falls back to a classic STA/LTA picker.
-A P/S ratio is only trusted when at least 3 stations agree, so a single
-spurious pick cannot override the model.
+
+Candidate stations are drawn from a wide pool (out to ~15° around the
+event) and queried nearest-first, skipping stations whose networks do not
+distribute data openly, until a target number of stations return usable
+waveforms. This matters where the closest stations belong to a restricted
+regional network: the pool reaches the next openly available stations
+instead of giving up. A P/S ratio is only trusted when at least 3 stations
+agree, so a single spurious pick cannot override the model.
 
 ### Scoring
 
@@ -392,10 +398,15 @@ st.warning("""
 
 4. **Waveform coverage varies**: P/S ratios are computed per run for a
    bounded batch of events (prioritising shallow, unexplained ones), so
-   not every event has waveform data yet, and local events may lack open
-   waveform coverage entirely. Phase picks come from a pretrained
-   EQTransformer model, which can miss weak or emergent P onsets at
-   regional distances; a ratio is only used when at least 3 stations agree.
+   not every event has waveform data yet. Local events may also lack *open*
+   waveform coverage: the closest stations are frequently restricted
+   regional networks whose data is not openly distributed (e.g. Iran's MP
+   network). The pipeline therefore considers a wide candidate pool out to
+   ~15° and walks it nearest-first until enough openly available stations
+   are found, but in sparse regions the usable stations can be several
+   hundred to ~1000 km away. Phase picks come from a pretrained EQTransformer
+   model, which can miss weak or emergent P onsets at regional distances;
+   a ratio is only used when at least 3 stations agree.
 
 5. **Location rule is a curated watchlist, not a fault database**: An event
    within 20 km of a site with independently confirmed explosion activity

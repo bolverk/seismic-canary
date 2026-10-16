@@ -55,6 +55,101 @@ except ImportError:
 
 
 @pytest.mark.skipif(not HAS_OBSPY, reason="ObsPy not installed")
+class TestRetrieveWaveforms:
+    """Request-budget behaviour of retrieve_waveforms."""
+
+    def _make_stations(self, n):
+        from src.ingestion.stations import StationInfo
+
+        return [
+            StationInfo(
+                network="XX",
+                station=f"S{i:02d}",
+                latitude=35.0,
+                longitude=51.0,
+                elevation_m=0.0,
+                description="",
+            )
+            for i in range(n)
+        ]
+
+    def _install_client(self, monkeypatch, calls, open_networks):
+        from obspy import Stream
+        import obspy.clients.fdsn as fdsn
+
+        class FakeClient:
+            def __init__(self, name, *args, **kwargs):
+                self.name = name
+
+            def get_waveforms(self, network, station, location, channel, starttime, endtime):
+                calls.append(f"{network}.{station}")
+                if network in open_networks:
+                    from obspy import Trace
+                    from obspy.core import Stats
+
+                    stats = Stats()
+                    stats.network = network
+                    stats.station = station
+                    stats.channel = "BHZ"
+                    stats.sampling_rate = 1.0
+                    stats.npts = 10
+                    stats.starttime = starttime
+                    tr = Trace(data=np.zeros(10), header=stats)
+                    return Stream([tr])
+                raise Exception("No data")
+
+        monkeypatch.setattr(fdsn, "Client", FakeClient)
+        return FakeClient
+
+    def _event_time(self):
+        return datetime(2024, 1, 15, 12, 30, 0, tzinfo=timezone.utc)
+
+    def test_stops_once_target_traces_reached(self, monkeypatch):
+        from src.processing.waveforms import retrieve_waveforms
+
+        calls = []
+        self._install_client(monkeypatch, calls, open_networks={"XX"})
+        stations = self._make_stations(5)
+
+        stream = retrieve_waveforms(
+            35.0, 51.0, self._event_time(), stations,
+            providers=["IRIS"], target_traces=2,
+        )
+
+        assert stream is not None
+        assert calls == ["XX.S00", "XX.S01"]
+
+    def test_max_attempts_caps_requests(self, monkeypatch):
+        from src.processing.waveforms import retrieve_waveforms
+
+        calls = []
+        self._install_client(monkeypatch, calls, open_networks=set())
+        stations = self._make_stations(10)
+
+        stream = retrieve_waveforms(
+            35.0, 51.0, self._event_time(), stations,
+            providers=["IRIS"], max_attempts=3,
+        )
+
+        assert stream is None
+        assert len(calls) == 3
+
+    def test_max_attempts_bounds_across_providers(self, monkeypatch):
+        from src.processing.waveforms import retrieve_waveforms
+
+        calls = []
+        self._install_client(monkeypatch, calls, open_networks=set())
+        stations = self._make_stations(10)
+
+        retrieve_waveforms(
+            35.0, 51.0, self._event_time(), stations,
+            providers=["IRIS", "ORFEUS", "GFZ"], max_attempts=4,
+        )
+
+        assert len(calls) == 4
+
+
+@pytest.mark.skipif(not HAS_OBSPY, reason="ObsPy not installed")
 class TestProcessWaveform:
     def _make_synthetic_trace(self, sr=100.0, duration=60.0, p_time=10.0, s_time=20.0):
         """Create a synthetic trace with P and S arrivals."""

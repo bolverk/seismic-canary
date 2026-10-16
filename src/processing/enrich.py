@@ -112,7 +112,7 @@ def enrich_event(
     Args:
         event: Event fields as a dict.
         station_discovery: Reusable station discovery/cache instance.
-        max_stations: Nearest stations to query.
+        max_stations: Size of the candidate station pool to consider.
         target_traces: Stop downloading once this many stations have data.
 
     Returns:

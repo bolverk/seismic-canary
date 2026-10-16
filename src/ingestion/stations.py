@@ -15,6 +15,10 @@ from src.config import Config
 
 logger = logging.getLogger(__name__)
 
+# Bump when the cached station-list shape changes (e.g. the candidate-pool
+# size), so stale entries are ignored and regenerated.
+_STATION_CACHE_VERSION = 3
+
 
 @dataclass
 class StationInfo:
@@ -254,15 +258,15 @@ class StationDiscovery:
         """Check cache for stations near a location.
 
         Args:
-            event_lat: Event latitude.
-            event_lon: Event longitude.
+            event_lat: Event latitude (degrees).
+            event_lon: Event longitude (degrees).
             tolerance_deg: How close a cached query must be to reuse.
 
         Returns:
             List of StationInfo if cache hit, None if miss.
         """
         cache = self.load_cache()
-        cache_key = f"{event_lat:.1f}_{event_lon:.1f}"
+        cache_key = self._cache_key(event_lat, event_lon)
 
         if cache_key in cache:
             entries = cache[cache_key]
@@ -275,10 +279,25 @@ class StationDiscovery:
     ) -> None:
         """Store stations in cache."""
         cache = self.load_cache()
-        cache_key = f"{event_lat:.1f}_{event_lon:.1f}"
+        cache_key = self._cache_key(event_lat, event_lon)
         cache[cache_key] = [asdict(s) for s in stations]
         self._cache = cache
         self.save_cache()
+
+    def _cache_key(self, event_lat: float, event_lon: float) -> str:
+        """Cache key for a 0.1-degree cell.
+
+        Encodes the search radius and candidate-pool size, so changing either
+        invalidates entries written under the old settings instead of silently
+        reusing a list that is too small (e.g. the nearest restricted stations
+        only, with no open stations beyond them).
+        """
+        return (
+            f"v{_STATION_CACHE_VERSION}"
+            f"_r{self.search_radius_deg:g}"
+            f"_n{Config.WAVEFORM_MAX_STATIONS}"
+            f"_{event_lat:.1f}_{event_lon:.1f}"
+        )
 
 
 # CLI entrypoint

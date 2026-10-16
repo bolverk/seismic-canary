@@ -65,7 +65,7 @@ class Config:
     
     # FDSN Waveform/Station services
     FDSN_PROVIDERS = ["IRIS", "ORFEUS", "GFZ"]
-    FDSN_STATION_RADIUS_DEG = 10.0  # degrees from event
+    FDSN_STATION_RADIUS_DEG = 15.0  # degrees from event (~1660 km)
     FDSN_WAVEFORM_PRE_SECONDS = 30.0
     FDSN_WAVEFORM_POST_SECONDS = 120.0
     
@@ -79,8 +79,15 @@ class Config:
     # grows with events x stations; a single update run only enriches a small
     # batch, prioritizing current high-alert events.
     WAVEFORM_MAX_EVENTS_PER_RUN = 20  # events enriched per update run
-    WAVEFORM_MAX_STATIONS = 10        # nearest stations queried per event
+    # Candidate stations considered per event. The nearest stations are often
+    # restricted regional networks (e.g. Iran's MP network) whose data is not
+    # openly distributed, so the pool must extend far enough out to reach open
+    # networks. Retrieval walks the pool nearest-first and stops at
+    # WAVEFORM_TARGET_TRACES, so a well-covered event still only queries a
+    # handful of nearby stations.
+    WAVEFORM_MAX_STATIONS = 40
     WAVEFORM_TARGET_TRACES = 8        # stop downloading once this many have data
+    WAVEFORM_MAX_ATTEMPTS = 60        # hard cap on waveform requests per event
     WAVEFORM_MIN_STATIONS = 3         # min agreeing stations to trust a P/S ratio
     
     # Anomaly model thresholds

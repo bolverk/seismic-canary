@@ -145,3 +145,33 @@ class TestStationDiscoveryCaching:
         finally:
             if os.path.exists(cache_path):
                 os.unlink(cache_path)
+
+    def test_cache_key_includes_radius_and_pool(self):
+        """The key encodes radius and pool size so config changes invalidate."""
+        small = StationDiscovery(search_radius_deg=10.0, cache_path="/tmp/x.json")
+        wide = StationDiscovery(search_radius_deg=15.0, cache_path="/tmp/x.json")
+
+        assert small._cache_key(35.0, 51.0) != wide._cache_key(35.0, 51.0)
+        assert "r10" in small._cache_key(35.0, 51.0)
+        assert "r15" in wide._cache_key(35.0, 51.0)
+
+    def test_widening_radius_does_not_reuse_stale_cache(self):
+        """A cache written at one radius is a miss at another radius."""
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            cache_path = f.name
+
+        try:
+            narrow = StationDiscovery(search_radius_deg=10.0, cache_path=cache_path)
+            wide = StationDiscovery(search_radius_deg=15.0, cache_path=cache_path)
+            narrow.cache_stations(
+                35.0,
+                51.0,
+                [StationInfo("II", "ABKT", 37.93, 58.12, 678.0, "Alibek")],
+            )
+
+            assert narrow.get_cached_stations(35.0, 51.0) is not None
+            # Same cell, wider radius: must not reuse the narrower pool.
+            assert wide.get_cached_stations(35.0, 51.0) is None
+        finally:
+            if os.path.exists(cache_path):
+                os.unlink(cache_path)
