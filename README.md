@@ -6,8 +6,8 @@ Seismic Canary automatically monitors publicly available seismic events, compute
 
 ## What This Does
 
-- Ingests seismic events from the USGS FDSN API every 30 minutes
-- Monitors Iran, Iraq, Turkey, Armenia, Azerbaijan, Turkmenistan, and the Persian Gulf
+- Ingests seismic events from the USGS and EMSC FDSN APIs every 30 minutes
+- Monitors Iran, Iraq, Turkey, Armenia, Azerbaijan, Turkmenistan, Israel, Lebanon, and the Persian Gulf
 - Computes seismic features: P/S amplitude ratio, mb-Ms, spectral characteristics
 - Applies a transparent rule-based anomaly model with interpretable scores
 - Presents all evidence in a Streamlit dashboard with maps, tables, and detail pages
@@ -29,6 +29,7 @@ This system:
 ┌─────────────────────────────────────────────────┐
 │              Data Sources                         │
 │  USGS FDSN API → Event catalog                  │
+│  EMSC FDSN API → Event catalog (+ explosions)   │
 │  IRIS/ORFEUS   → Waveforms, Station metadata    │
 └────────────────────┬────────────────────────────┘
                      │
@@ -38,7 +39,9 @@ This system:
          │                       │
          │  1. Fetch new events  │
          │  2. Deduplicate       │
+         │     (cross-provider)  │
          │  3. Extract features  │
+         │     (waveform P/S,SNR)│
          │  4. Score anomalies   │
          │  5. Save to Parquet   │
          └───────────┬───────────┘
@@ -105,13 +108,15 @@ The GitHub Actions workflow will automatically update `data/events.parquet` ever
 ├── src/
 │   ├── config.py                  # Centralized configuration
 │   ├── ingestion/
-│   │   ├── seismic.py            # USGS event ingestion
+│   │   ├── seismic.py            # FDSN base + USGS event ingestion
+│   │   ├── emsc.py               # EMSC event ingestion (+ explosion types)
 │   │   ├── stations.py           # FDSN station discovery
 │   │   └── providers.py          # Multi-sensor interfaces (future)
 │   ├── processing/
 │   │   ├── events.py            # Event schema & Parquet storage
 │   │   ├── features.py          # Spectral analysis & feature extraction
 │   │   ├── waveforms.py         # P/S measurement pipeline
+│   │   ├── enrich.py            # Per-run waveform enrichment orchestration
 │   │   └── timeline.py          # Event lifecycle tracking
 │   └── models/
 │       ├── anomaly.py           # Rule-based anomaly model
@@ -133,6 +138,7 @@ The GitHub Actions workflow will automatically update `data/events.parquet` ever
 | Source | Provides | Access |
 |--------|----------|--------|
 | [USGS FDSN Event API](https://earthquake.usgs.gov/fdsnws/event/1/) | Event metadata | Public |
+| [EMSC Seismic Portal](https://www.seismicportal.eu/fdsnws/event/1/) | Event metadata, incl. explosions | Public |
 | [IRIS FDSN Waveform](https://service.iris.edu/fdsnws/) | Seismic waveforms | Public |
 | [FDSN Station Service](https://www.fdsn.org/webservices/) | Station metadata | Public |
 

@@ -13,12 +13,25 @@ import sys
 import os
 from datetime import datetime, timezone, timedelta
 
+import pandas as pd
+
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.config import Config
-from src.ingestion.seismic import USGSProvider, USGSAPIError
-from src.processing.events import load_events, save_events, deduplicate_events
+from src.ingestion.seismic import USGSProvider, SeismicAPIError
+from src.ingestion.emsc import EMSCProvider
+from src.processing.events import (
+    load_events,
+    save_events,
+    deduplicate_events,
+    reconcile_cross_provider_events,
+)
+from src.processing.enrich import (
+    obspy_available,
+    select_events_for_enrichment,
+    enrich_event,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,12 +73,17 @@ def determine_fetch_window(existing_events) -> tuple:
     return start_time, end_time
 
 
-def run_update(days: int = None, dry_run: bool = False) -> dict:
+def run_update(
+    days: int = None,
+    dry_run: bool = False,
+    waveform_events: int = Config.WAVEFORM_MAX_EVENTS_PER_RUN,
+) -> dict:
     """Run the event update pipeline.
 
     Args:
         days: Override fetch window to last N days. If None, uses smart window.
         dry_run: If True, don't save results.
+        waveform_events: Max events to enrich with waveform features this run.
 
     Returns:
         Dictionary with update statistics.
@@ -75,7 +93,10 @@ def run_update(days: int = None, dry_run: bool = False) -> dict:
         "fetched_count": 0,
         "new_count": 0,
         "updated_count": 0,
+        "enriched_count": 0,
         "final_count": 0,
+        "provider_count": 0,
+        "provider_failures": 0,
         "errors": [],
     }
 
@@ -92,37 +113,84 @@ def run_update(days: int = None, dry_run: bool = False) -> dict:
     else:
         start_time, end_time = determine_fetch_window(existing)
 
-    # Fetch new events from USGS
-    provider = USGSProvider()
-    try:
-        logger.info(
-            f"Fetching from USGS: {start_time.isoformat()} to {end_time.isoformat()}"
-        )
-        new_events = provider.fetch_events(start_time, end_time)
-        stats["fetched_count"] = len(new_events)
-        logger.info(f"Fetched {len(new_events)} events from USGS.")
-    except USGSAPIError as e:
-        error_msg = f"USGS API error: {e}"
-        logger.error(error_msg)
-        stats["errors"].append(error_msg)
-        # Don't fail completely - we still have existing data
+    # Fetch new events from each provider
+    providers = [USGSProvider(), EMSCProvider()]
+    stats["provider_count"] = len(providers)
+    frames = []
+    for provider in providers:
+        try:
+            logger.info(
+                f"Fetching from {provider.provider_name.upper()}: "
+                f"{start_time.isoformat()} to {end_time.isoformat()}"
+            )
+            fetched = provider.fetch_events(start_time, end_time)
+            logger.info(
+                f"Fetched {len(fetched)} events from {provider.provider_name.upper()}."
+            )
+            frames.append(fetched)
+        except SeismicAPIError as e:
+            error_msg = f"{provider.provider_name.upper()} API error: {e}"
+            logger.error(error_msg)
+            stats["errors"].append(error_msg)
+            stats["provider_failures"] += 1
+
+    if frames:
+        new_events = pd.concat(frames, ignore_index=True)
+    else:
         new_events = existing.iloc[0:0]  # empty df with same schema
+    stats["fetched_count"] = len(new_events)
 
     if new_events.empty:
         logger.info("No new events fetched. Dataset unchanged.")
         stats["final_count"] = len(existing)
         return stats
 
-    # Deduplicate and merge
+    # Deduplicate (by event_id + provider) then collapse cross-provider
+    # duplicates of the same physical event (USGS has no explosion codes,
+    # EMSC does, so reconciliation can promote an EMSC record over a USGS one).
     merged = deduplicate_events(existing, new_events)
+    merged = reconcile_cross_provider_events(merged)
     stats["final_count"] = len(merged)
-    stats["new_count"] = len(merged) - len(existing)
+    stats["new_count"] = max(0, len(merged) - len(existing))
     stats["updated_count"] = stats["fetched_count"] - stats["new_count"]
 
     logger.info(
         f"After deduplication: {len(merged)} total events "
         f"({stats['new_count']} new, {stats['updated_count']} updated)"
     )
+
+    # Enrich a bounded batch of events with waveform-derived features (P/S,
+    # SNR). Without this, the P/S and mb-Ms rules have no data, so the depth
+    # rule alone dominates the score and produces shallow-event false positives.
+    if waveform_events > 0 and obspy_available():
+        selected = select_events_for_enrichment(merged, limit=waveform_events)
+        if selected:
+            from src.ingestion.stations import StationDiscovery
+
+            # alert_level may be int64; clearing it to None needs a float column.
+            if merged["alert_level"].dtype.kind in "iu":
+                merged["alert_level"] = merged["alert_level"].astype("float64")
+
+            logger.info(f"Enriching {len(selected)} events with waveform features...")
+            discovery = StationDiscovery()
+            for idx in selected:
+                try:
+                    updates = enrich_event(
+                        merged.loc[idx].to_dict(), station_discovery=discovery
+                    )
+                except Exception as e:  # never let enrichment break the run
+                    logger.warning(f"Enrichment failed for event at index {idx}: {e}")
+                    continue
+                if not updates:
+                    continue
+                for col, val in updates.items():
+                    merged.at[idx, col] = val
+                stats["enriched_count"] += 1
+            logger.info(
+                f"Enriched {stats['enriched_count']} events with waveform features."
+            )
+    elif waveform_events > 0:
+        logger.warning("ObsPy not available — skipping waveform enrichment.")
 
     # Run anomaly model on events that haven't been scored yet
     from src.models.anomaly import RuleBasedModel
@@ -151,7 +219,7 @@ def run_update(days: int = None, dry_run: bool = False) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Update seismic event dataset from USGS."
+        description="Update seismic event dataset from configured providers (USGS, EMSC)."
     )
     parser.add_argument(
         "--days",
@@ -164,6 +232,20 @@ def main():
         action="store_true",
         help="Fetch and process but don't save results.",
     )
+    parser.add_argument(
+        "--waveform-events",
+        type=int,
+        default=Config.WAVEFORM_MAX_EVENTS_PER_RUN,
+        help=(
+            "Max events to enrich with waveform features this run "
+            f"(default {Config.WAVEFORM_MAX_EVENTS_PER_RUN})."
+        ),
+    )
+    parser.add_argument(
+        "--no-waveforms",
+        action="store_true",
+        help="Skip waveform feature enrichment entirely.",
+    )
     args = parser.parse_args()
 
     logger.info("=" * 60)
@@ -172,7 +254,10 @@ def main():
     logger.info(f"Region: {Config.MONITORED_REGION_DESCRIPTION}")
     logger.info("=" * 60)
 
-    stats = run_update(days=args.days, dry_run=args.dry_run)
+    waveform_events = 0 if args.no_waveforms else args.waveform_events
+    stats = run_update(
+        days=args.days, dry_run=args.dry_run, waveform_events=waveform_events
+    )
 
     # Print summary
     logger.info("")
@@ -181,13 +266,21 @@ def main():
     logger.info(f"  Fetched events:  {stats['fetched_count']}")
     logger.info(f"  New events:      {stats['new_count']}")
     logger.info(f"  Updated events:  {stats['updated_count']}")
+    logger.info(f"  Enriched events: {stats['enriched_count']}")
     logger.info(f"  Final count:     {stats['final_count']}")
 
     if stats["errors"]:
-        logger.warning(f"  Errors: {len(stats['errors'])}")
+        logger.warning(f"  Provider errors: {len(stats['errors'])}")
         for err in stats["errors"]:
             logger.warning(f"    - {err}")
-        sys.exit(1)
+        # Only fail the run if every provider failed and nothing was fetched;
+        # a single provider outage should not block committing the other's data.
+        if (
+            stats["provider_count"] > 0
+            and stats["provider_failures"] >= stats["provider_count"]
+            and stats["fetched_count"] == 0
+        ):
+            sys.exit(1)
 
     logger.info("Done.")
 

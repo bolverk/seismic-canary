@@ -8,7 +8,7 @@ class RegionBounds:
     """Geographic bounding box for the monitored region."""
     min_latitude: float = 24.0
     max_latitude: float = 42.0
-    min_longitude: float = 43.0
+    min_longitude: float = 34.0
     max_longitude: float = 64.0
     
     @property
@@ -33,20 +33,35 @@ class Config:
     PROCESSING_VERSION = "0.1.0"
     MODEL_VERSION = "baseline-001"
     
-    # Geographic scope: Iran + neighbors
+    # Geographic scope: Iran + neighbors, including Israel and Lebanon
     REGION_BOUNDS = RegionBounds()
     
     # Monitored countries (for display purposes)
     MONITORED_REGION_DESCRIPTION = (
         "Iran, Iraq, Turkey, Armenia, Azerbaijan, Turkmenistan, "
-        "and the Persian Gulf region"
+        "Israel, Lebanon, and the Persian Gulf region"
     )
     
-    # USGS FDSN Event API
+    # USGS FDSN Event API (global, authoritative for M4.5+)
     USGS_API_BASE = "https://earthquake.usgs.gov/fdsnws/event/1/query"
     USGS_TIMEOUT_SECONDS = 30
     USGS_MAX_RETRIES = 3
     USGS_RETRY_DELAY_SECONDS = 5
+
+    # EMSC FDSN Event API (regional aggregator; far better M2-4 completeness
+    # in the eastern Mediterranean, and carries ISF event-type codes that
+    # distinguish explosions from earthquakes)
+    EMSC_API_BASE = "https://www.seismicportal.eu/fdsnws/event/1/query"
+    EMSC_TIMEOUT_SECONDS = 30
+    EMSC_MAX_RETRIES = 3
+    EMSC_RETRY_DELAY_SECONDS = 5
+    EMSC_MIN_MAGNITUDE = 3.0  # keeps regional microseismicity manageable
+    EMSC_MAX_RESULTS = 20000
+
+    # Cross-provider reconciliation: collapse the same physical event reported
+    # by more than one provider into a single record.
+    CROSS_PROVIDER_TIME_TOLERANCE_SECONDS = 60.0
+    CROSS_PROVIDER_DISTANCE_TOLERANCE_KM = 100.0
     
     # FDSN Waveform/Station services
     FDSN_PROVIDERS = ["IRIS", "ORFEUS", "GFZ"]
@@ -59,6 +74,13 @@ class Config:
     WAVEFORM_SHALLOW_DEPTH_KM = 5.0
     DEFAULT_FETCH_DAYS = 30  # How far back to fetch on first run
     INCREMENTAL_FETCH_HOURS = 2  # Overlap for incremental fetches
+
+    # Waveform feature enrichment (P/S, SNR). Bounded because download cost
+    # grows with events x stations; a single update run only enriches a small
+    # batch, prioritizing current high-alert events.
+    WAVEFORM_MAX_EVENTS_PER_RUN = 20  # events enriched per update run
+    WAVEFORM_MAX_STATIONS = 10        # nearest stations queried per event
+    WAVEFORM_TARGET_TRACES = 8        # stop downloading once this many have data
     
     # Anomaly model thresholds
     ALERT_LEVEL_THRESHOLDS = {

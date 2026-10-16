@@ -58,11 +58,19 @@ st.markdown("""
 | Source | Data | Access |
 |--------|------|--------|
 | [USGS Earthquake Catalog](https://earthquake.usgs.gov/fdsnws/event/1/) | Event metadata (location, magnitude, depth) | Public API |
+| [EMSC Seismic Portal](https://www.seismicportal.eu/fdsnws/event/1/) | Event metadata, including non-tectonic events (explosions, mining, induced) | Public API |
 | [FDSN Waveform Services](https://www.fdsn.org/webservices/) | Seismic waveforms | Public (IRIS/ORFEUS/GFZ) |
 | [FDSN Station Services](https://www.fdsn.org/webservices/) | Station metadata | Public |
 
 All data sources are official, machine-readable feeds intended for
 scientific applications. No scraping is used.
+
+USGS and EMSC report **independent event IDs** for the same physical event.
+Rather than show duplicates, records that are close in time (≤ 60 s) and
+space (≤ 100 km) across the two providers are reconciled into a single
+entry. When an event is classified as an explosion in one provider but not
+the other, the explosion classification is preserved (USGS does not carry
+explosion event types, EMSC does).
 """)
 
 st.header("How Anomaly Scores Work")
@@ -344,12 +352,18 @@ st.warning("""
 3. **Experimental model**: The scoring system has not been extensively
    validated against real nuclear tests (only against quarry blasts).
 
-4. **Waveform coverage varies**: Not all events have waveform data available.
+4. **Waveform coverage varies**: P/S ratios are computed per run for a
+   bounded batch of events (prioritising shallow, unexplained ones), so
+   not every event has waveform data yet, and local events may lack open
+   waveform coverage entirely.
 
 5. **Location rule not yet implemented**: Distance-to-fault calculation is
    a placeholder.
 
-6. **Single provider**: Currently only uses USGS catalog.
+6. **Provider coverage gaps**: EMSC aggregates many regional networks and
+   carries explosion classifications, but USGS is more authoritative for
+   teleseismic earthquakes. Cross-provider reconciliation is heuristic
+   (time/space windows), so rare mis-merges or missed merges are possible.
 
 7. **Not real-time**: Updates every 30 minutes via GitHub Actions.
 """)
@@ -360,6 +374,7 @@ st.markdown("""
 ┌────────────────────────────────────────────────────┐
 │                  Data Sources                        │
 │  USGS FDSN API → Events                            │
+│  EMSC FDSN API → Events (incl. explosions)         │
 │  IRIS/ORFEUS   → Waveforms, Station metadata       │
 └──────────────────────┬─────────────────────────────┘
                        │
@@ -369,7 +384,9 @@ st.markdown("""
            │                       │
            │  1. Fetch new events  │
            │  2. Deduplicate       │
+           │     (cross-provider)  │
            │  3. Extract features  │
+           │     (waveform P/S,SNR)│
            │  4. Score anomalies   │
            │  5. Save to Parquet   │
            └───────────┬───────────┘
@@ -396,7 +413,7 @@ Every assessment is traceable:
 
 - **Processing version:** `{Config.PROCESSING_VERSION}`
 - **Model version:** `{Config.MODEL_VERSION}`
-- **Source data:** Each event links to its original USGS page
+- **Source data:** Each event links to its original USGS or EMSC page
 - **Provenance:** First-seen and last-updated timestamps recorded
 
 To reproduce any assessment:

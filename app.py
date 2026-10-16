@@ -267,7 +267,7 @@ def render_sidebar() -> dict:
 
         st.markdown("---")
         st.caption(
-            f"Data source: USGS FDSN Event API | "
+            f"Data sources: USGS & EMSC FDSN Event APIs | "
             f"Model: {Config.MODEL_VERSION}"
         )
 

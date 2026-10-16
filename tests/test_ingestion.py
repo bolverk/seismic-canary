@@ -74,7 +74,7 @@ class TestFetchEvents:
         params = call_kwargs.kwargs.get("params") or call_kwargs[1].get("params")
         assert params["minlatitude"] == 24.0
         assert params["maxlatitude"] == 42.0
-        assert params["minlongitude"] == 43.0
+        assert params["minlongitude"] == 34.0
         assert params["maxlongitude"] == 64.0
 
     @patch("src.ingestion.seismic.requests.get")

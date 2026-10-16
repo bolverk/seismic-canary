@@ -82,6 +82,7 @@ def retrieve_waveforms(
     pre_seconds: float = Config.FDSN_WAVEFORM_PRE_SECONDS,
     post_seconds: float = Config.FDSN_WAVEFORM_POST_SECONDS,
     providers: Optional[List[str]] = None,
+    target_traces: Optional[int] = None,
 ) -> Optional[object]:
     """Retrieve waveform data from FDSN for given stations.
 
@@ -93,6 +94,8 @@ def retrieve_waveforms(
         pre_seconds: Seconds before event to retrieve.
         post_seconds: Seconds after event to retrieve.
         providers: FDSN provider names.
+        target_traces: Stop querying once this many distinct stations have
+            returned data (bounds the number of HTTP requests per event).
 
     Returns:
         ObsPy Stream object with waveforms, or None on failure.
@@ -111,8 +114,11 @@ def retrieve_waveforms(
     endtime = UTCDateTime(event_time) + post_seconds
 
     all_traces = Stream()
+    stations_with_data = set()
 
     for provider_name in providers:
+        if target_traces and len(stations_with_data) >= target_traces:
+            break
         try:
             client = Client(provider_name)
         except Exception as e:
@@ -131,10 +137,13 @@ def retrieve_waveforms(
                 )
                 if st:
                     all_traces += st
+                    stations_with_data.add(f"{station.network}.{station.station}")
                     logger.debug(
                         f"Retrieved {len(st)} traces from "
                         f"{station.network}.{station.station} via {provider_name}"
                     )
+                    if target_traces and len(stations_with_data) >= target_traces:
+                        break
             except Exception as e:
                 logger.debug(
                     f"No data from {station.network}.{station.station} "
@@ -330,6 +339,7 @@ def analyze_event_waveforms(
     event_lon: float,
     event_time: datetime,
     stations: List[StationInfo],
+    target_traces: Optional[int] = None,
 ) -> WaveformResult:
     """Full waveform analysis pipeline for a single event.
 
@@ -339,6 +349,8 @@ def analyze_event_waveforms(
         event_lon: Event longitude.
         event_time: Event origin time.
         stations: Stations to use.
+        target_traces: Stop downloading once this many distinct stations have
+            returned data.
 
     Returns:
         WaveformResult with all measurements.
@@ -346,7 +358,9 @@ def analyze_event_waveforms(
     result = WaveformResult(event_id=event_id)
 
     # Retrieve waveforms
-    stream = retrieve_waveforms(event_lat, event_lon, event_time, stations)
+    stream = retrieve_waveforms(
+        event_lat, event_lon, event_time, stations, target_traces=target_traces
+    )
 
     if stream is None:
         result.errors.append("No waveform data retrieved")

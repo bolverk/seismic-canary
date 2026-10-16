@@ -1,8 +1,9 @@
-"""USGS FDSN event ingestion module.
+"""Seismic event ingestion module: shared FDSN base + USGS provider.
 
-Fetches seismic events from the USGS Earthquake Catalog API,
-normalizes them to the internal event schema, and provides
-a provider interface for future multi-source support.
+Provides the shared ``FDSNEventProvider`` base (request/retry/normalization
+plumbing) used by all FDSN-compliant catalog providers, plus ``USGSProvider``
+for the USGS Earthquake Catalog API. Additional providers (e.g. EMSC in
+``src.ingestion.emsc``) subclass the same base.
 """
 import logging
 import time
@@ -47,7 +48,173 @@ class SeismicProvider(ABC):
         ...
 
 
-class USGSProvider(SeismicProvider):
+class SeismicAPIError(Exception):
+    """Raised when a seismic event provider returns an unrecoverable error."""
+
+
+class FDSNEventProvider(SeismicProvider):
+    """Base class for FDSN-compliant event web services.
+
+    Provides the shared HTTP request, retry, and empty-result handling so
+    concrete providers only have to implement ``_build_params`` and
+    ``_normalize_response``.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        timeout: int,
+        max_retries: int,
+        retry_delay: float,
+        error_class: type = SeismicAPIError,
+    ):
+        self.base_url = base_url
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.error_class = error_class
+
+    def fetch_events(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        region: Optional[RegionBounds] = None,
+    ) -> pd.DataFrame:
+        """Fetch events from the FDSN service.
+
+        Args:
+            start_time: Start of time window (UTC).
+            end_time: End of time window (UTC).
+            region: Geographic bounding box. If None, uses Config default.
+
+        Returns:
+            DataFrame with normalized event records.
+
+        Raises:
+            SeismicAPIError: On unrecoverable API errors.
+        """
+        if region is None:
+            region = Config.REGION_BOUNDS
+
+        params = self._build_params(start_time, end_time, region)
+        data = self._make_request(params)
+
+        if data is None:
+            return self._empty_df()
+
+        return self._normalize_response(data)
+
+    @abstractmethod
+    def _build_params(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        region: RegionBounds,
+    ) -> Dict[str, Any]:
+        """Build query parameters for the provider's API."""
+        ...
+
+    @abstractmethod
+    def _normalize_response(self, data: Dict) -> pd.DataFrame:
+        """Normalize a parsed API response to the internal event schema."""
+        ...
+
+    def _make_request(self, params: Dict[str, Any]) -> Optional[Dict]:
+        """Make an HTTP request with retries and error handling.
+
+        Returns:
+            Parsed JSON response or None if no data.
+
+        Raises:
+            SeismicAPIError: On unrecoverable API errors after retries.
+        """
+        last_error = None
+
+        for attempt in range(self.max_retries):
+            try:
+                response = requests.get(
+                    self.base_url,
+                    params=params,
+                    timeout=self.timeout,
+                )
+
+                if response.status_code == 204:
+                    # No content - empty result
+                    logger.info("%s API returned no events (204).", self.provider_name)
+                    return None
+
+                if response.status_code == 200:
+                    data = response.json()
+                    return data
+
+                if response.status_code == 400:
+                    # Bad request - don't retry
+                    raise self.error_class(
+                        f"Bad request (400): {response.text[:200]}"
+                    )
+
+                if response.status_code == 429:
+                    # Rate limited - wait and retry
+                    wait_time = self.retry_delay * (2 ** attempt)
+                    logger.warning(
+                        "Rate limited (429). Waiting %ss (attempt %s/%s)",
+                        wait_time, attempt + 1, self.max_retries,
+                    )
+                    time.sleep(wait_time)
+                    continue
+
+                if response.status_code >= 500:
+                    # Server error - retry
+                    last_error = self.error_class(
+                        f"Server error ({response.status_code}): "
+                        f"{response.text[:200]}"
+                    )
+                    logger.warning(
+                        "Server error %s, attempt %s/%s",
+                        response.status_code, attempt + 1, self.max_retries,
+                    )
+                    time.sleep(self.retry_delay * (2 ** attempt))
+                    continue
+
+                # Other error codes
+                raise self.error_class(
+                    f"Unexpected status {response.status_code}: "
+                    f"{response.text[:200]}"
+                )
+
+            except requests.exceptions.Timeout:
+                last_error = self.error_class(
+                    f"Request timed out after {self.timeout}s"
+                )
+                logger.warning(
+                    "Timeout, attempt %s/%s", attempt + 1, self.max_retries,
+                )
+                time.sleep(self.retry_delay)
+
+            except requests.exceptions.ConnectionError as e:
+                last_error = self.error_class(f"Connection error: {e}")
+                logger.warning(
+                    "Connection error, attempt %s/%s",
+                    attempt + 1, self.max_retries,
+                )
+                time.sleep(self.retry_delay)
+
+            except (ValueError, KeyError) as e:
+                # JSON parse error or unexpected response format
+                raise self.error_class(f"Failed to parse response: {e}")
+
+        # All retries exhausted
+        if last_error:
+            raise last_error
+        raise self.error_class("All retries exhausted with no specific error")
+
+    def _empty_df(self) -> pd.DataFrame:
+        """Return an empty DataFrame with the event schema."""
+        from src.processing.events import get_empty_events_df
+        return get_empty_events_df()
+
+
+class USGSProvider(FDSNEventProvider):
     """USGS FDSN Event API provider.
 
     Fetches events from:
@@ -63,44 +230,17 @@ class USGSProvider(SeismicProvider):
         max_retries: int = Config.USGS_MAX_RETRIES,
         retry_delay: float = Config.USGS_RETRY_DELAY_SECONDS,
     ):
-        self.base_url = base_url
-        self.timeout = timeout
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
+        super().__init__(
+            base_url=base_url,
+            timeout=timeout,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            error_class=USGSAPIError,
+        )
 
     @property
     def provider_name(self) -> str:
         return "usgs"
-
-    def fetch_events(
-        self,
-        start_time: datetime,
-        end_time: datetime,
-        region: Optional[RegionBounds] = None,
-    ) -> pd.DataFrame:
-        """Fetch events from USGS FDSN API.
-
-        Args:
-            start_time: Start of time window (UTC).
-            end_time: End of time window (UTC).
-            region: Geographic bounding box.
-
-        Returns:
-            DataFrame with normalized event records.
-
-        Raises:
-            USGSAPIError: On unrecoverable API errors.
-        """
-        if region is None:
-            region = Config.REGION_BOUNDS
-
-        params = self._build_params(start_time, end_time, region)
-        data = self._make_request(params)
-
-        if data is None:
-            return self._empty_df()
-
-        return self._normalize_response(data)
 
     def _build_params(
         self,
@@ -119,94 +259,6 @@ class USGSProvider(SeismicProvider):
             "maxlongitude": region.max_longitude,
             "orderby": "time",
         }
-
-    def _make_request(self, params: Dict[str, Any]) -> Optional[Dict]:
-        """Make HTTP request with retries and error handling.
-
-        Returns:
-            Parsed JSON response or None if no data.
-
-        Raises:
-            USGSAPIError: On unrecoverable errors after retries.
-        """
-        last_error = None
-
-        for attempt in range(self.max_retries):
-            try:
-                response = requests.get(
-                    self.base_url,
-                    params=params,
-                    timeout=self.timeout,
-                )
-
-                if response.status_code == 204:
-                    # No content - empty result
-                    logger.info("USGS API returned no events (204).")
-                    return None
-
-                if response.status_code == 200:
-                    data = response.json()
-                    return data
-
-                if response.status_code == 400:
-                    # Bad request - don't retry
-                    raise USGSAPIError(
-                        f"Bad request (400): {response.text[:200]}"
-                    )
-
-                if response.status_code == 429:
-                    # Rate limited - wait and retry
-                    wait_time = self.retry_delay * (2 ** attempt)
-                    logger.warning(
-                        f"Rate limited (429). Waiting {wait_time}s "
-                        f"(attempt {attempt + 1}/{self.max_retries})"
-                    )
-                    time.sleep(wait_time)
-                    continue
-
-                if response.status_code >= 500:
-                    # Server error - retry
-                    last_error = USGSAPIError(
-                        f"Server error ({response.status_code}): "
-                        f"{response.text[:200]}"
-                    )
-                    logger.warning(
-                        f"Server error {response.status_code}, "
-                        f"attempt {attempt + 1}/{self.max_retries}"
-                    )
-                    time.sleep(self.retry_delay * (2 ** attempt))
-                    continue
-
-                # Other error codes
-                raise USGSAPIError(
-                    f"Unexpected status {response.status_code}: "
-                    f"{response.text[:200]}"
-                )
-
-            except requests.exceptions.Timeout:
-                last_error = USGSAPIError(
-                    f"Request timed out after {self.timeout}s"
-                )
-                logger.warning(
-                    f"Timeout, attempt {attempt + 1}/{self.max_retries}"
-                )
-                time.sleep(self.retry_delay)
-
-            except requests.exceptions.ConnectionError as e:
-                last_error = USGSAPIError(f"Connection error: {e}")
-                logger.warning(
-                    f"Connection error, attempt {attempt + 1}/{self.max_retries}"
-                )
-                time.sleep(self.retry_delay)
-
-            except (ValueError, KeyError) as e:
-                # JSON parse error or unexpected response format
-                raise USGSAPIError(f"Failed to parse response: {e}")
-
-        # All retries exhausted
-        if last_error:
-            raise last_error
-        raise USGSAPIError("All retries exhausted with no specific error")
 
     def _normalize_response(self, data: Dict) -> pd.DataFrame:
         """Normalize USGS GeoJSON response to internal schema.
@@ -333,13 +385,8 @@ class USGSProvider(SeismicProvider):
             "processing_version": None,
         }
 
-    def _empty_df(self) -> pd.DataFrame:
-        """Return an empty DataFrame with the event schema."""
-        from src.processing.events import get_empty_events_df
-        return get_empty_events_df()
 
-
-class USGSAPIError(Exception):
+class USGSAPIError(SeismicAPIError):
     """Raised when the USGS API returns an unrecoverable error."""
     pass
 
