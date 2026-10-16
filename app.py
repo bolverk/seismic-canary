@@ -79,7 +79,7 @@ def create_map(events: pd.DataFrame) -> folium.Map:
     m = folium.Map(
         location=[center[0], center[1]],
         zoom_start=Config.MAP_ZOOM_START,
-        tiles="CartoDB positron",
+        tiles="OpenStreetMap",
     )
 
     # Draw monitored region boundary
