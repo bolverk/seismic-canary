@@ -29,5 +29,6 @@ Thumbs.db
 
 # Data (large files tracked separately)
 data/timelines/
+data/stations_cache.json
 !data/.gitkeep
 !data/events.parquet
