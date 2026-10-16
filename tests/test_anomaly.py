@@ -169,3 +169,54 @@ class TestTransparency:
         }
         result = model.assess(event)
         assert len(result.summary) > 0
+
+
+class TestMissingDataIsNotAMeasurement:
+    """NaN must behave exactly like ``None``.
+
+    Parquet stores numeric features as float64, so "no P/S ratio" comes back
+    from a save/load as ``NaN`` rather than ``None``. A bare ``is None`` check
+    lets ``NaN`` fall through every ``>`` comparison and land in the final
+    branch, silently scoring missing data as a real *low* P/S ratio and
+    inflating earthquake consistency for every un-enriched event.
+    """
+
+    BASE = {"depth_km": 10.0, "latitude": 35.0, "longitude": 51.0,
+            "p_s_ratio": None, "mb_ms": None}
+
+    def _rule(self, result, name):
+        return next(c for c in result.contributing_features if c.feature_name == name)
+
+    def test_nan_p_s_ratio_rule_is_skipped(self, model):
+        result = model.assess({**self.BASE, "p_s_ratio": float("nan")})
+        ps = self._rule(result, "p_s_ratio")
+        assert ps.confidence == 0.0
+        assert ps.raw_value is None
+        assert "nan" not in ps.explanation
+
+    def test_nan_p_s_scores_same_as_none(self, model):
+        as_none = model.assess({**self.BASE, "p_s_ratio": None})
+        as_nan = model.assess({**self.BASE, "p_s_ratio": float("nan")})
+        assert as_nan.earthquake_consistency == as_none.earthquake_consistency
+        assert as_nan.explosion_consistency == as_none.explosion_consistency
+        assert as_nan.alert_level == as_none.alert_level
+
+    def test_nan_p_s_does_not_shift_toward_earthquake(self, model):
+        # The pre-fix behaviour: NaN scored 0.85/0.15 at confidence 0.9,
+        # pushing un-enriched events towards "earthquake".
+        base = model.assess({**self.BASE, "p_s_ratio": None})
+        nan = model.assess({**self.BASE, "p_s_ratio": float("nan")})
+        assert nan.earthquake_consistency == pytest.approx(base.earthquake_consistency)
+        low_but_real = model.assess({**self.BASE, "p_s_ratio": -0.5})
+        assert low_but_real.earthquake_consistency > nan.earthquake_consistency
+
+    def test_nan_depth_is_skipped(self, model):
+        with_none = model.assess({**self.BASE, "depth_km": None})
+        with_nan = model.assess({**self.BASE, "depth_km": float("nan")})
+        assert self._rule(with_nan, "depth").confidence == 0.0
+        assert with_nan.alert_level == with_none.alert_level
+        assert with_nan.confidence == with_none.confidence
+
+    def test_nan_mb_ms_is_skipped(self, model):
+        result = model.assess({**self.BASE, "mb_ms": float("nan")})
+        assert self._rule(result, "mb_ms").confidence == 0.0

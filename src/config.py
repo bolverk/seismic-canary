@@ -81,6 +81,7 @@ class Config:
     WAVEFORM_MAX_EVENTS_PER_RUN = 20  # events enriched per update run
     WAVEFORM_MAX_STATIONS = 10        # nearest stations queried per event
     WAVEFORM_TARGET_TRACES = 8        # stop downloading once this many have data
+    WAVEFORM_MIN_STATIONS = 3         # min agreeing stations to trust a P/S ratio
     
     # Anomaly model thresholds
     ALERT_LEVEL_THRESHOLDS = {
@@ -105,6 +106,18 @@ class Config:
     BANDPASS_FREQMAX = 10.0  # Hz
     P_WINDOW_SECONDS = 3.0
     S_WINDOW_SECONDS = 5.0
+
+    # Phase picking. "auto" prefers a pretrained SeisBench model (PhaseNet)
+    # for P/S onset times and falls back to the classic STA/LTA picker when
+    # SeisBench/torch is unavailable. "sta_lta" forces the legacy picker.
+    WAVEFORM_PICKER = "auto"          # auto | seisbench | sta_lta
+    SEISBENCH_MODEL = "EQTransformer"  # e.g. PhaseNet, EQTransformer
+    SEISBENCH_CHECKPOINT = "instance"  # pretrained weight set
+    # Optional override of the per-phase detection threshold. None (default)
+    # uses the checkpoint's own calibrated default_args — model probabilities
+    # are poorly calibrated for raw scores, so overriding usually loses
+    # valid picks (e.g. 0.3 rejects S onsets peaking near 0.06).
+    SEISBENCH_PICK_THRESHOLD = None
     
     # Display
     MAP_ZOOM_START = 5

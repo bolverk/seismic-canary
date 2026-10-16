@@ -155,6 +155,26 @@ class TestEnrichEvent:
         assert updates["waveform_quality"] == "marginal"
         assert updates["alert_level"] is None
 
+    def test_suppresses_ratio_below_min_stations(self, monkeypatch):
+        monkeypatch.setattr(enrich, "obspy_available", lambda: True)
+        discovery = FakeDiscovery(cached=[object()])
+        result = WaveformResult(
+            event_id="em1",
+            successful_stations=1,
+            median_p_s_ratio=0.4,
+            quality="poor",
+            picks=[PickResult(station="A", network="X", channel="BHZ",
+                              p_s_ratio=0.4, snr=10.0)],
+        )
+        monkeypatch.setattr(enrich, "analyze_event_waveforms", lambda **kw: result)
+
+        updates = enrich_event(_event(), station_discovery=discovery)
+        # A single agreeing station is not enough to override the model.
+        assert updates["p_s_ratio"] is None
+        assert updates["snr"] is None
+        assert updates["station_count"] == 1
+        assert updates["waveform_quality"] == "poor"
+
     def test_uses_cache_and_skips_station_query(self, monkeypatch):
         monkeypatch.setattr(enrich, "obspy_available", lambda: True)
         discovery = FakeDiscovery(cached=[object()])

@@ -61,9 +61,11 @@ def generate_alert(
         return None
 
     # Check station count (only if waveform features are present)
+    # pd.isna catches both None and the NaN that parquet round-trips give us.
+    p_s_ratio = event_data.get("p_s_ratio")
     station_count = event_data.get("station_count")
-    has_waveforms = event_data.get("p_s_ratio") is not None
-    if has_waveforms and station_count is not None:
+    has_waveforms = not pd.isna(p_s_ratio)
+    if has_waveforms and not pd.isna(station_count):
         if station_count < Config.ALERT_MIN_STATION_COUNT:
             return None
 

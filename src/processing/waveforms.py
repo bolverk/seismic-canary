@@ -7,7 +7,7 @@ and computes P/S amplitude ratios.
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Any
 
 import numpy as np
 
@@ -30,6 +30,9 @@ class PickResult:
     p_s_ratio: Optional[float] = None  # log10(P_amp / S_amp)
     snr: Optional[float] = None
     quality: str = "unavailable"  # good, marginal, poor, unavailable
+    p_probability: Optional[float] = None  # picker confidence in P onset
+    s_probability: Optional[float] = None  # picker confidence in S onset
+    picker: str = "sta_lta"  # which picker produced the onsets
 
 
 @dataclass
@@ -154,6 +157,66 @@ def retrieve_waveforms(
     return all_traces if len(all_traces) > 0 else None
 
 
+def measure_amplitudes(
+    trace,
+    p_sample: int,
+    s_sample: int,
+    p_window: float = Config.P_WINDOW_SECONDS,
+    s_window: float = Config.S_WINDOW_SECONDS,
+) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    """Measure P/S amplitudes, their log10 ratio, and SNR from two onsets.
+
+    Args:
+        trace: ObsPy Trace (already filtered) with the phases present.
+        p_sample: P onset sample index.
+        s_sample: S onset sample index.
+        p_window: P measurement window (seconds).
+        s_window: S measurement window (seconds).
+
+    Returns:
+        Tuple of (p_amplitude, s_amplitude, p_s_ratio, snr); any may be None.
+    """
+    data = trace.data
+    sr = trace.stats.sampling_rate
+
+    p_amplitude: Optional[float] = None
+    s_amplitude: Optional[float] = None
+    p_s_ratio: Optional[float] = None
+    snr: Optional[float] = None
+
+    p_start = max(0, p_sample)
+    p_end = min(p_sample + int(p_window * sr), len(data))
+    if p_end > p_start:
+        p_amplitude = float(np.max(np.abs(data[p_start:p_end])))
+
+    s_start = max(0, s_sample)
+    s_end = min(s_sample + int(s_window * sr), len(data))
+    if s_end > s_start and s_start < len(data):
+        s_amplitude = float(np.max(np.abs(data[s_start:s_end])))
+
+    if p_amplitude and s_amplitude and s_amplitude > 0:
+        p_s_ratio = float(np.log10(p_amplitude / s_amplitude))
+
+    noise_end = max(0, p_sample - int(1.0 * sr))
+    noise_start = max(0, noise_end - int(5.0 * sr))
+    if noise_end > noise_start and p_end > p_start:
+        noise_rms = np.sqrt(np.mean(data[noise_start:noise_end] ** 2))
+        if noise_rms > 0:
+            signal_rms = np.sqrt(np.mean(data[p_start:p_end] ** 2))
+            snr = float(signal_rms / noise_rms)
+
+    return p_amplitude, s_amplitude, p_s_ratio, snr
+
+
+def assess_quality(p_s_ratio: Optional[float], snr: Optional[float]) -> str:
+    """Map a P/S ratio and SNR to a pick-quality label."""
+    if p_s_ratio is not None and snr is not None and snr > 5:
+        return "good"
+    if p_s_ratio is not None:
+        return "marginal"
+    return "poor"
+
+
 def process_waveform(
     trace,
     event_time: datetime,
@@ -254,46 +317,235 @@ def process_waveform(
         s_time_sec = s_sample / sr
         result.s_time = s_time_sec
 
-        # Measure P amplitude (max absolute in P window)
-        p_start = p_sample
-        p_end = min(p_sample + int(p_window * sr), len(data))
-        if p_end > p_start:
-            p_amp = np.max(np.abs(data[p_start:p_end]))
-            result.p_amplitude = float(p_amp)
-
-        # Measure S amplitude (max absolute in S window)
-        s_start = s_sample
-        s_end = min(s_sample + int(s_window * sr), len(data))
-        if s_end > s_start and s_start < len(data):
-            s_amp = np.max(np.abs(data[s_start:s_end]))
-            result.s_amplitude = float(s_amp)
-
-        # Compute P/S ratio
-        if result.p_amplitude and result.s_amplitude and result.s_amplitude > 0:
-            result.p_s_ratio = float(np.log10(result.p_amplitude / result.s_amplitude))
-
-        # Compute SNR (signal = P window, noise = pre-P window)
-        noise_end = max(0, p_sample - int(1.0 * sr))
-        noise_start = max(0, noise_end - int(5.0 * sr))
-        if noise_end > noise_start:
-            noise_rms = np.sqrt(np.mean(data[noise_start:noise_end] ** 2))
-            if noise_rms > 0:
-                signal_rms = np.sqrt(np.mean(data[p_start:p_end] ** 2))
-                result.snr = float(signal_rms / noise_rms)
-
-        # Quality assessment
-        if result.p_s_ratio is not None and result.snr is not None and result.snr > 5:
-            result.quality = "good"
-        elif result.p_s_ratio is not None:
-            result.quality = "marginal"
-        else:
-            result.quality = "poor"
+        # Amplitude, P/S ratio and SNR from the two onsets
+        result.p_amplitude, result.s_amplitude, result.p_s_ratio, result.snr = \
+            measure_amplitudes(tr, p_sample, s_sample, p_window, s_window)
+        result.quality = assess_quality(result.p_s_ratio, result.snr)
 
     except Exception as e:
         logger.warning(f"Error processing {trace.id}: {e}")
         result.quality = "poor"
 
     return result
+
+
+_SEISBENCH_MODEL_CACHE: Dict[Tuple[str, str], Any] = {}
+
+
+def seisbench_available() -> bool:
+    """Whether the optional SeisBench + torch dependencies are importable."""
+    try:
+        import seisbench  # noqa: F401
+        import torch  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _load_seisbench_model(model_name: str, checkpoint: str):
+    """Load and cache a pretrained SeisBench phase-picking model."""
+    key = (model_name, checkpoint)
+    if key not in _SEISBENCH_MODEL_CACHE:
+        import seisbench.models as sbm
+
+        model_cls = getattr(sbm, model_name)
+        model = model_cls.from_pretrained(checkpoint)
+        model.eval()
+        _SEISBENCH_MODEL_CACHE[key] = model
+    return _SEISBENCH_MODEL_CACHE[key]
+
+
+def _group_by_station(stream) -> Dict[str, Any]:
+    """Group a Stream into per-station sub-Streams keyed by ``NET.STA``."""
+    from obspy import Stream
+
+    groups: Dict[str, Stream] = {}
+    for tr in stream:
+        key = f"{tr.stats.network}.{tr.stats.station}"
+        groups.setdefault(key, Stream()).append(tr)
+    return groups
+
+
+def _pick_times_from_model_picks(model_picks) -> Tuple[Any, Any, Optional[float], Optional[float]]:
+    """Extract the first P and the first post-P S onset from model picks.
+
+    Returns (p_time, s_time, p_probability, s_probability); times are absolute
+    (ObsPy UTCDateTime) and probabilities are floats or None.
+    """
+    p_time = s_time = None
+    p_prob = s_prob = None
+    ordered = sorted(model_picks, key=lambda p: p.peak_time)
+
+    for pk in ordered:
+        if str(getattr(pk, "phase", "")).upper() == "P":
+            p_time = pk.peak_time
+            p_prob = float(pk.peak_value)
+            break
+
+    for pk in ordered:
+        if str(getattr(pk, "phase", "")).upper() == "S" and (
+            p_time is None or pk.peak_time > p_time
+        ):
+            s_time = pk.peak_time
+            s_prob = float(pk.peak_value)
+            break
+
+    return p_time, s_time, p_prob, s_prob
+
+
+class PhasePicker:
+    """Strategy for locating P/S onsets on retrieved waveforms."""
+
+    name = "base"
+
+    def pick(self, stream, event_time) -> List[PickResult]:
+        raise NotImplementedError
+
+
+class StaLtaPicker(PhasePicker):
+    """Classic per-trace STA/LTA picker (vertical component only)."""
+
+    name = "sta_lta"
+
+    def pick(self, stream, event_time) -> List[PickResult]:
+        picks = []
+        processed = set()
+        for trace in stream:
+            key = f"{trace.stats.network}.{trace.stats.station}"
+            if key in processed and not trace.stats.channel.endswith("Z"):
+                continue
+            processed.add(key)
+            if trace.stats.channel.endswith("Z"):
+                pick = process_waveform(trace, event_time)
+                pick.picker = self.name
+                picks.append(pick)
+        return picks
+
+
+class SeisBenchPicker(PhasePicker):
+    """Pretrained deep-learning phase picker (e.g. EQTransformer via SeisBench).
+
+    Consumes three-component station waveforms and returns P and S onset
+    times with confidences. Stations without a full three-component set (or
+    when the model cannot be loaded) fall back to the STA/LTA picker so no
+    station is silently dropped.
+
+    Detection thresholds default to the checkpoint's calibrated values
+    (``Config.SEISBENCH_PICK_THRESHOLD = None``); overriding them with a
+    generic probability cut-off discards most valid regional picks.
+    """
+
+    name = "seisbench"
+
+    def __init__(
+        self,
+        model_name: Optional[str] = None,
+        checkpoint: Optional[str] = None,
+        threshold: Optional[float] = None,
+        model: Any = None,
+    ):
+        self.model_name = model_name or Config.SEISBENCH_MODEL
+        self.checkpoint = checkpoint or Config.SEISBENCH_CHECKPOINT
+        self.threshold = (
+            Config.SEISBENCH_PICK_THRESHOLD if threshold is None else threshold
+        )
+        self._model = model
+
+    def _get_model(self):
+        if self._model is None:
+            self._model = _load_seisbench_model(self.model_name, self.checkpoint)
+        return self._model
+
+    def _classify_kwargs(self) -> dict:
+        """Keyword arguments for ``model.classify``.
+
+        SeisBench takes per-phase thresholds as ``P_threshold`` / ``S_threshold``
+        (a bare ``threshold`` is silently ignored). With no configured value we
+        pass nothing so the checkpoint's calibrated ``default_args`` apply.
+        """
+        if self.threshold is None:
+            return {}
+        return {"P_threshold": self.threshold, "S_threshold": self.threshold}
+
+    def pick(self, stream, event_time) -> List[PickResult]:
+        try:
+            model = self._get_model()
+        except Exception as e:  # pragma: no cover - depends on environment
+            logger.warning(f"SeisBench model unavailable ({e}); using STA/LTA.")
+            return StaLtaPicker().pick(stream, event_time)
+
+        picks: List[PickResult] = []
+        for key, sub in _group_by_station(stream).items():
+            vertical = [tr for tr in sub if tr.stats.channel.endswith("Z")]
+            if len(sub) < 3 or not vertical:
+                for tr in vertical:
+                    pick = process_waveform(tr, event_time)
+                    pick.picker = StaLtaPicker.name
+                    picks.append(pick)
+                continue
+
+            try:
+                output = model.classify(sub, **self._classify_kwargs())
+                model_picks = list(output.picks)
+            except Exception as e:
+                logger.debug(f"SeisBench classify failed for {key}: {e}")
+                model_picks = []
+
+            p_time, s_time, p_prob, s_prob = _pick_times_from_model_picks(model_picks)
+            picks.append(
+                self._build_pick(vertical[0], p_time, s_time, p_prob, s_prob)
+            )
+        return picks
+
+    def _build_pick(self, z_trace, p_time, s_time, p_prob, s_prob) -> PickResult:
+        result = PickResult(
+            station=z_trace.stats.station,
+            network=z_trace.stats.network,
+            channel=z_trace.stats.channel,
+            p_probability=p_prob,
+            s_probability=s_prob,
+            picker=self.name,
+        )
+
+        tr = z_trace.copy()
+        try:
+            tr.detrend("demean")
+            tr.detrend("linear")
+            tr.filter(
+                "bandpass",
+                freqmin=Config.BANDPASS_FREQMIN,
+                freqmax=Config.BANDPASS_FREQMAX,
+                zerophase=True,
+            )
+        except Exception:
+            pass
+
+        sr = tr.stats.sampling_rate
+        if p_time is not None:
+            result.p_time = float(p_time - tr.stats.starttime)
+        if s_time is not None:
+            result.s_time = float(s_time - tr.stats.starttime)
+
+        if result.p_time is not None and result.s_time is not None:
+            p_sample = int(result.p_time * sr)
+            s_sample = int(result.s_time * sr)
+            result.p_amplitude, result.s_amplitude, result.p_s_ratio, result.snr = \
+                measure_amplitudes(tr, p_sample, s_sample)
+            result.quality = assess_quality(result.p_s_ratio, result.snr)
+        else:
+            result.quality = "poor"
+
+        return result
+
+
+def get_default_picker(preference: Optional[str] = None) -> PhasePicker:
+    """Select a phase picker from config (``auto`` | ``seisbench`` | ``sta_lta``)."""
+    pref = (preference or Config.WAVEFORM_PICKER or "auto").lower()
+    if pref == "sta_lta":
+        return StaLtaPicker()
+    if pref == "seisbench":
+        return SeisBenchPicker()
+    return SeisBenchPicker() if seisbench_available() else StaLtaPicker()
 
 
 def aggregate_picks(picks: List[PickResult]) -> WaveformResult:
@@ -340,6 +592,7 @@ def analyze_event_waveforms(
     event_time: datetime,
     stations: List[StationInfo],
     target_traces: Optional[int] = None,
+    picker: Optional[PhasePicker] = None,
 ) -> WaveformResult:
     """Full waveform analysis pipeline for a single event.
 
@@ -351,6 +604,8 @@ def analyze_event_waveforms(
         stations: Stations to use.
         target_traces: Stop downloading once this many distinct stations have
             returned data.
+        picker: Phase picker to use; defaults to the configured picker
+            (SeisBench when available, otherwise STA/LTA).
 
     Returns:
         WaveformResult with all measurements.
@@ -368,22 +623,9 @@ def analyze_event_waveforms(
 
     result.station_count = len(set(tr.stats.station for tr in stream))
 
-    # Process each trace (use vertical component preferentially)
-    processed_stations = set()
-    picks = []
-
-    for trace in stream:
-        station_key = f"{trace.stats.network}.{trace.stats.station}"
-        # Prefer Z component, skip if already processed
-        if station_key in processed_stations:
-            if not trace.stats.channel.endswith("Z"):
-                continue
-        processed_stations.add(station_key)
-
-        # Only process Z (vertical) component for P/S
-        if trace.stats.channel.endswith("Z"):
-            pick = process_waveform(trace, event_time)
-            picks.append(pick)
+    # Pick P/S onsets and measure amplitudes/P/S ratio per station
+    picker = picker or get_default_picker()
+    picks = picker.pick(stream, event_time)
 
     # Aggregate
     agg = aggregate_picks(picks)

@@ -19,6 +19,23 @@ from src.config import Config
 logger = logging.getLogger(__name__)
 
 
+def _is_missing(value: Any) -> bool:
+    """True when a feature value is absent.
+
+    ``None`` and ``NaN`` must both be treated as missing. Parquet stores
+    numeric features as float64, so "no measurement" survives a save/load as
+    ``NaN``; a bare ``is None`` check would then let ``NaN`` fall through every
+    ``>`` comparison and land in the last branch, silently scoring "missing"
+    as if it were a real low measurement.
+    """
+    if value is None:
+        return True
+    try:
+        return bool(value != value)
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass
 class RuleContribution:
     """Contribution of a single rule to the assessment."""
@@ -203,7 +220,7 @@ class RuleBasedModel(AnomalyModel):
         Explosions are typically shallow (< 5 km), often < 2 km.
         Deep events (> 10 km) are almost certainly tectonic.
         """
-        if depth_km is None:
+        if _is_missing(depth_km):
             return RuleContribution(
                 feature_name="depth",
                 raw_value=None,
@@ -245,7 +262,7 @@ class RuleBasedModel(AnomalyModel):
         Explosions produce strong P-waves relative to S-waves.
         log10(P/S) > 0.5 is suspicious; < 0 is earthquake-like.
         """
-        if p_s_ratio is None:
+        if _is_missing(p_s_ratio):
             return RuleContribution(
                 feature_name="p_s_ratio",
                 raw_value=None,
@@ -291,7 +308,7 @@ class RuleBasedModel(AnomalyModel):
         Explosions: mb-Ms > 1.0 (strong body waves, weak surface waves)
         Earthquakes: mb-Ms < 0.5
         """
-        if mb_ms is None:
+        if _is_missing(mb_ms):
             return RuleContribution(
                 feature_name="mb_ms",
                 raw_value=None,
@@ -409,7 +426,7 @@ class RuleBasedModel(AnomalyModel):
         Placeholder: future implementation will use known fault database.
         For now, returns low-confidence neutral assessment.
         """
-        if latitude is None or longitude is None:
+        if _is_missing(latitude) or _is_missing(longitude):
             return RuleContribution(
                 feature_name="location",
                 raw_value=None,

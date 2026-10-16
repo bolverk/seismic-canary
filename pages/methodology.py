@@ -61,6 +61,7 @@ st.markdown("""
 | [EMSC Seismic Portal](https://www.seismicportal.eu/fdsnws/event/1/) | Event metadata, including non-tectonic events (explosions, mining, induced) | Public API |
 | [FDSN Waveform Services](https://www.fdsn.org/webservices/) | Seismic waveforms | Public (IRIS/ORFEUS/GFZ) |
 | [FDSN Station Services](https://www.fdsn.org/webservices/) | Station metadata | Public |
+| [SeisBench](https://github.com/seisbench/seisbench) | Pretrained phase-picking model (EQTransformer) | Open source |
 
 All data sources are official, machine-readable feeds intended for
 scientific applications. No scraping is used.
@@ -84,10 +85,20 @@ explosion-consistency scores.
 | Feature | Measurement | Explosion-like when... | Earthquake-like when... |
 |---------|-------------|----------------------|------------------------|
 | **Depth** | From catalog | < 5 km (very shallow) | > 10 km |
-| **P/S Ratio** | From waveform analysis | log₁₀(P/S) > 0.5 | log₁₀(P/S) < 0 |
+| **P/S Ratio** | From waveform analysis (phase picker) | log₁₀(P/S) > 0.5 | log₁₀(P/S) < 0 |
 | **mb - Ms** | Body-wave minus surface-wave magnitude | > 1.0 | < 0.5 |
 | **Source Mechanism** | Moment tensor / catalog classification | No tensor + classified explosion | Moment tensor solved (double-couple) |
 | **Location** | Distance from known faults | Far from active faults | Near known fault |
+
+### Phase picking
+
+P and S arrival times are located with a pretrained deep-learning picker
+(SeisBench **EQTransformer**, `instance` checkpoint) run on three-component
+station waveforms, and the P/S amplitude ratio is measured from the picked
+onsets. When SeisBench is unavailable, or a station lacks a full
+three-component set, the pipeline falls back to a classic STA/LTA picker.
+A P/S ratio is only trusted when at least 3 stations agree, so a single
+spurious pick cannot override the model.
 
 ### Scoring
 
@@ -355,7 +366,9 @@ st.warning("""
 4. **Waveform coverage varies**: P/S ratios are computed per run for a
    bounded batch of events (prioritising shallow, unexplained ones), so
    not every event has waveform data yet, and local events may lack open
-   waveform coverage entirely.
+   waveform coverage entirely. Phase picks come from a pretrained
+   EQTransformer model, which can miss weak or emergent P onsets at
+   regional distances; a ratio is only used when at least 3 stations agree.
 
 5. **Location rule not yet implemented**: Distance-to-fault calculation is
    a placeholder.

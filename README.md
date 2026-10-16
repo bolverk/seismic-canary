@@ -77,6 +77,11 @@ source venv/bin/activate  # or venv\Scripts\activate on Windows
 # Install dependencies
 pip install -r requirements.txt
 
+# Optional (keeps the install light): install CPU-only PyTorch first, then
+# requirements — seisbench would otherwise pull the ~1.5 GB CUDA wheels
+# pip install torch --index-url https://download.pytorch.org/whl/cpu
+# pip install -r requirements.txt
+
 # Run tests
 pytest tests/ -v
 
@@ -115,7 +120,7 @@ The GitHub Actions workflow will automatically update `data/events.parquet` ever
 │   ├── processing/
 │   │   ├── events.py            # Event schema & Parquet storage
 │   │   ├── features.py          # Spectral analysis & feature extraction
-│   │   ├── waveforms.py         # P/S measurement pipeline
+│   │   ├── waveforms.py         # Phase picking (SeisBench) & P/S measurement
 │   │   ├── enrich.py            # Per-run waveform enrichment orchestration
 │   │   └── timeline.py          # Event lifecycle tracking
 │   └── models/
@@ -141,6 +146,7 @@ The GitHub Actions workflow will automatically update `data/events.parquet` ever
 | [EMSC Seismic Portal](https://www.seismicportal.eu/fdsnws/event/1/) | Event metadata, incl. explosions | Public |
 | [IRIS FDSN Waveform](https://service.iris.edu/fdsnws/) | Seismic waveforms | Public |
 | [FDSN Station Service](https://www.fdsn.org/webservices/) | Station metadata | Public |
+| [SeisBench](https://github.com/seisbench/seisbench) | Pretrained phase picker (EQTransformer) | Open source |
 
 ## Anomaly Model
 

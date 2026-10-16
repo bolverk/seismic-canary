@@ -173,8 +173,13 @@ def enrich_event(
         target_traces=target_traces,
     )
 
-    updates["p_s_ratio"] = result.median_p_s_ratio
-    updates["snr"] = _median_snr(result.picks)
+    updates["p_s_ratio"] = (
+        result.median_p_s_ratio
+        if result.median_p_s_ratio is not None
+        and (result.successful_stations or 0) >= Config.WAVEFORM_MIN_STATIONS
+        else None
+    )
+    updates["snr"] = _median_snr(result.picks) if updates["p_s_ratio"] is not None else None
     updates["station_count"] = int(result.successful_stations or 0)
     updates["waveform_quality"] = result.quality
     return updates

@@ -7,6 +7,13 @@ from src.processing.waveforms import (
     is_eligible_for_waveforms,
     process_waveform,
     aggregate_picks,
+    measure_amplitudes,
+    assess_quality,
+    get_default_picker,
+    StaLtaPicker,
+    SeisBenchPicker,
+    PhasePicker,
+    _pick_times_from_model_picks,
     PickResult,
     WaveformResult,
 )
@@ -204,3 +211,184 @@ class TestAggregatePicks:
         assert result.successful_stations == 2
         assert result.median_p_s_ratio is not None
         assert result.quality == "poor"  # only 2 successful < 3
+
+
+class TestAssessQuality:
+    def test_good(self):
+        assert assess_quality(0.3, 8.0) == "good"
+
+    def test_marginal_without_snr(self):
+        assert assess_quality(0.3, None) == "marginal"
+
+    def test_marginal_low_snr(self):
+        assert assess_quality(0.3, 2.0) == "marginal"
+
+    def test_poor_without_ratio(self):
+        assert assess_quality(None, 20.0) == "poor"
+
+
+class TestGetDefaultPicker:
+    def test_forced_sta_lta(self):
+        assert isinstance(get_default_picker("sta_lta"), StaLtaPicker)
+
+    def test_forced_seisbench(self):
+        assert isinstance(get_default_picker("seisbench"), SeisBenchPicker)
+
+    def test_auto_returns_picker(self):
+        assert isinstance(get_default_picker("auto"), PhasePicker)
+
+
+class _P:
+    """Minimal stand-in for a SeisBench pick."""
+
+    def __init__(self, phase, t, v):
+        self.phase = phase
+        self.peak_time = t
+        self.peak_value = v
+
+
+class TestPickTimesFromModelPicks:
+    def test_earliest_p_and_first_post_p_s(self):
+        picks = [_P("S", 5, 0.2), _P("P", 10, 0.9), _P("P", 12, 0.5), _P("S", 20, 0.7)]
+        p, s, pp, sp = _pick_times_from_model_picks(picks)
+        assert (p, s, pp, sp) == (10, 20, 0.9, 0.7)
+
+    def test_s_before_p_ignored(self):
+        p, s, pp, sp = _pick_times_from_model_picks([_P("S", 5, 0.2), _P("P", 10, 0.9)])
+        assert p == 10 and s is None
+
+    def test_empty(self):
+        assert _pick_times_from_model_picks([]) == (None, None, None, None)
+
+
+@pytest.mark.skipif(not HAS_OBSPY, reason="ObsPy not installed")
+class TestMeasureAmplitudes:
+    def _trace(self, sr=100.0, n=6000, p_sample=1000, s_sample=2000,
+               p_amp=5.0, s_amp=10.0):
+        from obspy import Trace, UTCDateTime
+        from obspy.core import Stats
+
+        data = np.random.normal(0, 0.01, n)
+        data[p_sample] = p_amp
+        data[s_sample] = s_amp
+        stats = Stats()
+        stats.network = "II"
+        stats.station = "TEST"
+        stats.channel = "BHZ"
+        stats.sampling_rate = sr
+        stats.npts = n
+        stats.starttime = UTCDateTime(2024, 1, 15, 12, 30, 0)
+        return Trace(data=data.astype(np.float64), header=stats)
+
+    def test_ratio_and_snr(self):
+        tr = self._trace()
+        pa, sa, ratio, snr = measure_amplitudes(tr, 1000, 2000)
+        assert pa == pytest.approx(5.0)
+        assert sa == pytest.approx(10.0)
+        assert ratio == pytest.approx(np.log10(0.5))
+        assert snr is not None
+
+    def test_short_trace_yields_no_ratio(self):
+        tr = self._trace(n=50, p_sample=10, s_sample=20)
+        pa, sa, ratio, snr = measure_amplitudes(tr, 40, 60)
+        assert sa is None
+        assert ratio is None
+
+
+@pytest.mark.skipif(not HAS_OBSPY, reason="ObsPy not installed")
+class TestSeisBenchPicker:
+    class _Output:
+        def __init__(self, picks):
+            self.picks = picks
+
+    class _FakeModel:
+        def __init__(self, picks):
+            self._picks = picks
+            self.calls = 0
+            self.kwargs = None
+
+        def classify(self, stream, **kwargs):
+            self.calls += 1
+            self.kwargs = kwargs
+            return TestSeisBenchPicker._Output(self._picks)
+
+    def _stream(self, components=("HHZ", "HHN", "HHE")):
+        from obspy import Stream, Trace, UTCDateTime
+        from obspy.core import Stats
+
+        sr, n = 100.0, 6000
+        start = UTCDateTime(2024, 1, 15, 12, 30, 0)
+        data = np.zeros(n)
+        data[1000] = 5.0   # P at 10 s
+        data[2000] = 10.0  # S at 20 s
+        traces = []
+        for chan in components:
+            stats = Stats()
+            stats.network, stats.station = "XX", "AAA"
+            stats.channel = chan
+            stats.sampling_rate, stats.npts = sr, n
+            stats.starttime = start
+            traces.append(Trace(data=data.copy(), header=stats))
+        return Stream(traces), start
+
+    def test_builds_pick_with_ratio(self):
+        stream, start = self._stream()
+        picks = [_P("P", start + 10, 0.9), _P("S", start + 20, 0.8)]
+        picker = SeisBenchPicker(model=self._FakeModel(picks))
+
+        out = picker.pick(stream, start.datetime)
+
+        assert len(out) == 1
+        pr = out[0]
+        assert pr.station == "AAA" and pr.picker == "seisbench"
+        assert pr.p_time == pytest.approx(10.0)
+        assert pr.s_time == pytest.approx(20.0)
+        assert pr.p_probability == 0.9 and pr.s_probability == 0.8
+        assert pr.p_s_ratio == pytest.approx(np.log10(0.5))
+
+    def test_default_defers_to_checkpoint_threshold(self):
+        stream, start = self._stream()
+        picks = [_P("P", start + 10, 0.9), _P("S", start + 20, 0.8)]
+        model = self._FakeModel(picks)
+
+        SeisBenchPicker(model=model).pick(stream, start.datetime)
+
+        # No threshold override: SeisBench would silently ignore a bare
+        # "threshold" kwarg and the checkpoint's calibrated default applies.
+        assert model.kwargs == {}
+
+    def test_configured_threshold_is_per_phase(self):
+        stream, start = self._stream()
+        picks = [_P("P", start + 10, 0.9), _P("S", start + 20, 0.8)]
+        model = self._FakeModel(picks)
+
+        SeisBenchPicker(model=model, threshold=0.05).pick(stream, start.datetime)
+
+        assert model.kwargs == {"P_threshold": 0.05, "S_threshold": 0.05}
+
+    def test_missing_s_yields_poor_pick(self):
+        stream, start = self._stream()
+        picker = SeisBenchPicker(model=self._FakeModel([_P("P", start + 10, 0.9)]))
+        out = picker.pick(stream, start.datetime)
+        assert len(out) == 1
+        assert out[0].p_s_ratio is None and out[0].quality == "poor"
+
+    def test_single_component_falls_back_to_stalta(self):
+        stream, start = self._stream(components=("HHZ",))
+        model = self._FakeModel([_P("P", start + 10, 0.9)])
+        picker = SeisBenchPicker(model=model)
+        out = picker.pick(stream, start.datetime)
+        assert model.calls == 0  # model not invoked without 3 components
+        assert len(out) == 1 and out[0].picker == "sta_lta"
+
+    def test_model_load_failure_falls_back(self, monkeypatch):
+        stream, start = self._stream()
+        picker = SeisBenchPicker(model=None)
+
+        def boom():
+            raise RuntimeError("no weights")
+
+        monkeypatch.setattr(picker, "_get_model", boom)
+        out = picker.pick(stream, start.datetime)
+        # Falls back to STA/LTA without raising
+        assert isinstance(out, list)
