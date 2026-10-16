@@ -200,8 +200,25 @@ class RuleBasedModel(AnomalyModel):
         else:
             alert_level = 0
 
+        # "Probable explosion" is a positive claim and needs more than the
+        # catalog depth. Regional depths are frequently a near-surface
+        # default rather than a measured value, and the P/S, mb-Ms and
+        # source-mechanism rules are exactly the ones that would confirm or
+        # refute it — when they are all missing or argue against an
+        # explosion, the assessment is incomplete, not confirmed.
+        corroboration_capped = False
+        if (
+            Config.ALERT_LEVEL2_REQUIRE_CORROBORATION
+            and alert_level == 2
+            and not self._has_explosion_corroboration(contributions)
+        ):
+            alert_level = 1
+            corroboration_capped = True
+
         # Generate summary
-        summary = self._generate_summary(alert_level, explosion_score, contributions)
+        summary = self._generate_summary(
+            alert_level, explosion_score, contributions, corroboration_capped
+        )
 
         return Assessment(
             earthquake_consistency=earthquake_score,
@@ -212,6 +229,26 @@ class RuleBasedModel(AnomalyModel):
             model_version=self.VERSION,
             insufficient_data=insufficient_data,
             summary=summary,
+        )
+
+    # Rules able to corroborate an explosion claim independently of depth.
+    # The location rule is a placeholder and is deliberately excluded.
+    _CORROBORATING_RULES = ("p_s_ratio", "mb_ms", "source_mechanism")
+
+    def _has_explosion_corroboration(
+        self, contributions: List[RuleContribution]
+    ) -> bool:
+        """True when some non-depth rule leans explosion.
+
+        Merely *having* information is not enough: a catalog that classifies
+        an event as an earthquake is information arguing *against* an
+        explosion, so it does not corroborate one.
+        """
+        return any(
+            c.feature_name in self._CORROBORATING_RULES
+            and c.confidence > 0
+            and c.contribution_explosion > c.contribution_earthquake
+            for c in contributions
         )
 
     def _assess_depth(self, depth_km: Optional[float]) -> RuleContribution:
@@ -453,6 +490,7 @@ class RuleBasedModel(AnomalyModel):
         alert_level: int,
         explosion_score: float,
         contributions: List[RuleContribution],
+        corroboration_capped: bool = False,
     ) -> str:
         """Generate a human-readable assessment summary."""
         if alert_level == -1:
@@ -462,6 +500,12 @@ class RuleBasedModel(AnomalyModel):
 
         if alert_level == 0:
             return "Seismic characteristics consistent with ordinary tectonic earthquake."
+        elif alert_level == 1 and corroboration_capped:
+            return (
+                "Shallow event with no corroborating discriminant. Catalog "
+                "depth alone cannot establish an explosion, so the event is "
+                "held at 'unusual' rather than 'probable explosion'."
+            )
         elif alert_level == 1:
             unusual = [c for c in active_features if c.contribution_explosion > 0.6]
             feature_names = [c.feature_name for c in unusual]

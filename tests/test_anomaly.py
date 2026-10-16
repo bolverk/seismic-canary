@@ -1,6 +1,7 @@
 """Tests for rule-based anomaly model."""
 import pytest
 
+from src.config import Config
 from src.models.anomaly import RuleBasedModel, Assessment, AnomalyModel
 
 
@@ -220,3 +221,85 @@ class TestMissingDataIsNotAMeasurement:
     def test_nan_mb_ms_is_skipped(self, model):
         result = model.assess({**self.BASE, "mb_ms": float("nan")})
         assert self._rule(result, "mb_ms").confidence == 0.0
+
+
+class TestLevel2NeedsCorroboration:
+    """"Probable explosion" must not rest on catalog depth alone.
+
+    Regional depths are often a near-surface default rather than a measured
+    value, so a very shallow depth with no P/S, mb-Ms or source-mechanism
+    evidence is an incomplete assessment, not a confirmed explosion.
+    """
+
+    def test_depth_only_is_held_at_level_1(self, model):
+        event = {
+            "depth_km": 0.5, "p_s_ratio": None, "mb_ms": None,
+            "latitude": 36.85, "longitude": 49.51,
+        }
+        result = model.assess(event)
+        assert result.explosion_consistency > Config.ALERT_LEVEL_THRESHOLDS[2]
+        assert result.alert_level == 1
+
+    def test_catalog_earthquake_does_not_corroborate(self, model):
+        # Magnitude type and event type are present, but they argue *against*
+        # an explosion — that is not corroboration.
+        event = {
+            "depth_km": 1.0, "p_s_ratio": None, "mb_ms": None,
+            "magnitude_type": "ml", "event_type": "earthquake",
+            "latitude": 36.85, "longitude": 49.51,
+        }
+        result = model.assess(event)
+        assert result.explosion_consistency > Config.ALERT_LEVEL_THRESHOLDS[2]
+        assert result.alert_level == 1
+
+    def test_high_ps_reaches_level_2(self, model):
+        event = {
+            "depth_km": 1.5, "p_s_ratio": 0.8, "mb_ms": None,
+            "latitude": 34.5, "longitude": 55.2,
+        }
+        assert model.assess(event).alert_level == 2
+
+    def test_high_mb_ms_reaches_level_2(self, model):
+        event = {
+            "depth_km": 1.0, "p_s_ratio": None, "mb_ms": 1.5,
+            "latitude": 34.5, "longitude": 55.2,
+        }
+        assert model.assess(event).alert_level == 2
+
+    def test_classified_explosion_reaches_level_2(self, model):
+        # Mirrors the calibration set: catalog event_type=explosion is an
+        # independent, explosion-leaning signal.
+        event = {
+            "depth_km": 0.0, "p_s_ratio": None, "mb_ms": None,
+            "event_type": "explosion", "magnitude_type": "ml",
+            "latitude": 33.901, "longitude": 35.519,
+        }
+        assert model.assess(event).alert_level == 2
+
+    def test_moment_tensor_blocks_level_2(self, model):
+        # A solved moment tensor is a strong earthquake constraint, so it can
+        # never corroborate an explosion even alongside a very shallow depth.
+        event = {
+            "depth_km": 0.5, "p_s_ratio": None, "mb_ms": None,
+            "magnitude_type": "mww", "event_type": "earthquake",
+            "latitude": 38.0, "longitude": 42.0,
+        }
+        assert model.assess(event).alert_level < 2
+
+    def test_flag_can_be_disabled(self, model, monkeypatch):
+        monkeypatch.setattr(Config, "ALERT_LEVEL2_REQUIRE_CORROBORATION", False)
+        event = {
+            "depth_km": 0.5, "p_s_ratio": None, "mb_ms": None,
+            "latitude": 36.85, "longitude": 49.51,
+        }
+        assert model.assess(event).alert_level == 2
+
+    def test_summary_explains_the_hold(self, model):
+        event = {
+            "depth_km": 1.0, "p_s_ratio": None, "mb_ms": None,
+            "magnitude_type": "m", "event_type": "earthquake",
+            "latitude": 36.85, "longitude": 49.51,
+        }
+        result = model.assess(event)
+        assert result.alert_level == 1
+        assert "depth alone" in result.summary

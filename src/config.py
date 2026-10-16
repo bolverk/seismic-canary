@@ -89,6 +89,13 @@ class Config:
         1: 0.3,    # unusual
         2: 0.6,    # probable explosion
     }
+
+    # Level 2 is a positive claim ("probable explosion"), so it needs more
+    # than the catalog depth, which is the least reliable input we have and
+    # is often a near-surface default outside dense networks. When the only
+    # explosion-leaning signal is depth, report the event at most as
+    # "unusual" (level 1) until another discriminant corroborates it.
+    ALERT_LEVEL2_REQUIRE_CORROBORATION = True
     
     # Alert generation criteria
     ALERT_MIN_STATION_COUNT = 3

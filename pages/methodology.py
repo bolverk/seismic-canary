@@ -164,8 +164,16 @@ st.markdown("""
 |-------|------|----------|---------|
 | 0 | **Ordinary** | Explosion score < 0.3 | Consistent with tectonic earthquake |
 | 1 | **Unusual** | Explosion score 0.3-0.6 | Some anomalous features |
-| 2 | **Probable Explosion** | Explosion score ≥ 0.6 | Multiple explosion-like characteristics |
+| 2 | **Probable Explosion** | Explosion score ≥ 0.6 **and** corroboration | Multiple explosion-like characteristics |
 | -1 | **Insufficient Data** | Confidence < 0.25 | Not enough information to assess |
+
+**Level 2 requires corroboration.** "Probable explosion" is a positive claim, and
+catalog depth is our least reliable input — outside dense networks it is frequently
+a near-surface default rather than a measured value. An event whose only
+explosion-leaning signal is depth is held at Level 1 until another discriminant
+agrees: a high P/S ratio, a high mb-Ms, or a catalog classification of
+"explosion". Evidence arguing *against* an explosion (a solved moment tensor, or a
+catalog "earthquake" classification) never counts as corroboration.
 
 **Alerts are generated only when:**
 - Alert level ≥ 1
